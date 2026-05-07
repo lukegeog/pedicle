@@ -945,6 +945,12 @@ const Dict = {
   start(){
     if(!this.available()){ $('#micStatus').textContent="Sorry — your browser doesn't support speech recognition. Type the debrief instead."; return; }
     if(this.active) return;
+    // Snapshot whatever is currently in the textarea — including unfinalised interim from a
+    // previous pause and any manual edits — as the committed prefix for this new session.
+    // Without this, iOS Safari drops trailing interim on stop() and the next session would
+    // rewrite the textarea with only the new transcript, erasing the visible earlier words.
+    this.finalText = $('#dictText').value || '';
+    if(this.finalText && !/\s$/.test(this.finalText)) this.finalText += ' ';
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = this.rec = new SR();
     rec.lang='en-GB'; rec.continuous=true; rec.interimResults=true;
@@ -956,7 +962,7 @@ const Dict = {
         else interim += t;
       }
       if(final) this.finalText += final;
-      $('#dictText').value = (this.finalText + (interim ? ' '+interim : '')).trim();
+      $('#dictText').value = (this.finalText + interim).trimEnd();
     };
     rec.onerror = (e)=>{
       console.warn('SR error', e);
