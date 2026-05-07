@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+
+# Local backups / scratch
+*.local.html
+*.bak
+.icon-data-url.txt
+.manifest-href.txt
+.apple-href.txt
+
+# Personal exports — never commit case data
+pedicle-*.json
+casebook-*.json
