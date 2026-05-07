@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — 2026-05-07
+
+- **Whisper transcription** (optional). Paste an OpenAI API key in Settings → Smart features → OpenAI API key (Whisper). When set, the Dictate mic button records audio via MediaRecorder, uploads it to OpenAI Whisper after you stop, and inserts the high-accuracy transcript into the textarea. Whisper is biased toward plastic-surgery vocabulary via a tuned prompt (suture sizes, anatomy, eponyms, V-numbers). Falls back to browser Web Speech API when no OpenAI key is configured.
+- **Auto-drafted ISCP reflections**. The "Generate ISCP reflection" button now auto-drafts with Claude as soon as the sheet opens (whenever a Claude API key is set). A new ↻ Regenerate button in the sheet header lets you re-roll the draft until you're happy.
+- **Removed the "Use Claude for…" toggles** from Settings. Configuring an API key is now the single signal: key set = AI features active. Clearing the key disables them.
+- New "OpenAI API key (Whisper)" entry in Settings, sitting alongside Claude API key + model.
+
 ## 0.2.1 — 2026-05-07
 
 - **Fix**: Dictation no longer overwrites earlier transcripts when you pause and resume. The recogniser now snapshots the textarea content at each `start()` and treats it as the committed prefix, so unfinalised interim text from a previous pause (which iOS Safari drops on `stop()`) is preserved. Manual edits during a pause are preserved for the same reason.

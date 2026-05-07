@@ -370,24 +370,20 @@
     <h3 class="set-section-h">Smart features (optional)</h3>
     <div class="settings-list">
       <div class="settings-item" id="sApiKey">
-        <div><div class="label">Claude API key</div><div class="sub" id="sApiKeySub">Not set &mdash; using local heuristics</div></div>
+        <div><div class="label">Claude API key</div><div class="sub" id="sApiKeySub">Not set</div></div>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
       <div class="settings-item" id="sModel">
-        <div><div class="label">Model</div><div class="sub" id="sModelSub">claude-haiku-4-5-20251001</div></div>
+        <div><div class="label">Claude model</div><div class="sub" id="sModelSub">claude-haiku-4-5-20251001</div></div>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
-      <div class="settings-item">
-        <div><div class="label">Use Claude for dictation</div><div class="sub">Smarter routing into fields</div></div>
-        <label class="toggle"><input type="checkbox" id="tUseClaudeDict"/><span class="track"></span></label>
-      </div>
-      <div class="settings-item">
-        <div><div class="label">Use Claude for ISCP drafts</div><div class="sub">AI-drafted reflective text</div></div>
-        <label class="toggle"><input type="checkbox" id="tUseClaudeIscp"/><span class="track"></span></label>
+      <div class="settings-item" id="sOpenAIKey">
+        <div><div class="label">OpenAI API key (Whisper)</div><div class="sub" id="sOpenAIKeySub">Not set &mdash; using browser dictation</div></div>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
       </div>
     </div>
     <p style="margin-top:8px;font-size:12px;color:var(--text-muted);line-height:1.5;padding:0 4px">
-      Patient ID (V-numbers) is auto-redacted before any text is sent to Claude. Photos are never sent. Even so, weigh up your Trust's IG policy before enabling.
+      With a Claude key, dictation parsing and ISCP reflections are AI-drafted automatically. With an OpenAI key, dictation switches to Whisper &mdash; much better for surgical vocabulary. V-numbers are auto-redacted from any text sent to Claude. Audio sent to OpenAI for Whisper isn't retained or used for training. Photos are never sent.
     </p>
 
     <h3 class="set-section-h">Data</h3>
@@ -459,7 +455,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
     <h2>ISCP Reflection</h2>
-    <button class="sheet-save" id="iscpCopy">Copy</button>
+    <div style="display:flex;gap:6px;flex:0 0 auto">
+      <button class="sheet-save muted" id="iscpRegen" title="Regenerate" style="display:none;padding:8px 12px;font-size:18px">↻</button>
+      <button class="sheet-save" id="iscpCopy">Copy</button>
+    </div>
   </div>
   <div class="sheet-body">
     <div class="iscp-status" id="iscpStatus"></div>
@@ -869,12 +868,15 @@ async function changePinFlow(){ closeSheet('setSheet','setBack'); setTimeout(()=
 
 async function refreshSettingsLabels(){
   const k = await Meta.get('claudeApiKey');
-  $('#sApiKeySub').textContent = k ? `Set — ends in ${k.slice(-4)}` : 'Not set — using local heuristics';
+  $('#sApiKeySub').textContent = k ? `Set — ends in ${k.slice(-4)}` : 'Not set';
   const m = (await Meta.get('claudeModel')) || DEFAULT_MODEL;
   $('#sModelSub').textContent = m;
-  $('#tUseClaudeDict').checked = !!(await Meta.get('useClaudeDict'));
-  $('#tUseClaudeIscp').checked = !!(await Meta.get('useClaudeIscp'));
-  $('#parseModeLabel').textContent = (k && (await Meta.get('useClaudeDict'))) ? 'Claude parser active.' : 'Local parser active.';
+  const ok = await Meta.get('openaiApiKey');
+  $('#sOpenAIKeySub').textContent = ok ? `Set — ends in ${ok.slice(-4)}` : 'Not set — using browser dictation';
+  const parts = [];
+  parts.push(k ? 'Claude parser' : 'Local parser');
+  parts.push(ok ? 'Whisper transcription' : 'Browser dictation');
+  $('#parseModeLabel').textContent = parts.join(' · ') + '.';
 }
 function promptApiKey(){
   Meta.get('claudeApiKey').then(curr=>{
@@ -887,6 +889,20 @@ function promptApiKey(){
         await refreshSettingsLabels(); toast('Saved');
       },
       { input:true, inputType:'password', value:curr||'', placeholder:'sk-ant-...', okText:'Save' }
+    );
+  });
+}
+function promptOpenAIKey(){
+  Meta.get('openaiApiKey').then(curr=>{
+    confirmDialog(
+      'OpenAI API key (Whisper)',
+      'Paste your OpenAI API key (starts with sk-...). Used for Whisper audio transcription only. Stored only on this device. Leave blank to clear.',
+      async (val)=>{
+        if(!val || !val.trim()){ await Meta.del('openaiApiKey'); }
+        else { await Meta.set('openaiApiKey', val.trim()); }
+        await refreshSettingsLabels(); toast('Saved');
+      },
+      { input:true, inputType:'password', value:curr||'', placeholder:'sk-...', okText:'Save' }
     );
   });
 }
@@ -992,6 +1008,110 @@ const Dict = {
   reset(){ this.finalText=''; $('#dictText').value=''; }
 };
 
+/* -------- Whisper (OpenAI) recorder -------- */
+const Whisper = {
+  rec:null, stream:null, chunks:[], active:false, mimeType:null,
+  available(){ return !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
+  pickMime(){
+    const types = ['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg'];
+    return types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+  },
+  async start(){
+    if(this.active) return;
+    if(!this.available()){ $('#micStatus').textContent="Audio recording isn't supported on this browser."; return; }
+    try{
+      this.stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    }catch(e){
+      $('#micStatus').textContent = e.name==='NotAllowedError' ? 'Mic permission denied. Enable it in browser settings.' : "Couldn't access microphone.";
+      return;
+    }
+    this.mimeType = this.pickMime();
+    this.chunks = [];
+    try{
+      this.rec = this.mimeType ? new MediaRecorder(this.stream,{mimeType:this.mimeType}) : new MediaRecorder(this.stream);
+      this.mimeType = this.rec.mimeType || this.mimeType;
+    }catch(e){
+      console.error(e); this._cleanup();
+      $('#micStatus').textContent="Couldn't start recorder.";
+      return;
+    }
+    this.rec.ondataavailable = (e)=>{ if(e.data && e.data.size>0) this.chunks.push(e.data); };
+    this.rec.onstop = ()=>this._handleStop();
+    this.rec.onerror = (e)=>{ console.warn('MediaRecorder error',e); this._cleanup(); $('#micStatus').textContent='Recording error. Tap mic to retry.'; };
+    this.rec.start();
+    this.active = true;
+    $('#micBtn').classList.add('recording');
+    $('#micStatus').textContent='Recording… tap mic to stop and transcribe.';
+  },
+  stop(){
+    if(!this.active) return;
+    this.active = false;
+    $('#micBtn').classList.remove('recording');
+    try{ this.rec && this.rec.state!=='inactive' && this.rec.stop(); }catch(_){}
+  },
+  toggle(){ this.active ? this.stop() : this.start() },
+  _cleanup(){
+    this.active = false;
+    $('#micBtn').classList.remove('recording');
+    if(this.stream){ this.stream.getTracks().forEach(t=>t.stop()); this.stream=null; }
+    this.chunks = [];
+  },
+  async _handleStop(){
+    const stream=this.stream;
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); this.stream=null; }
+    if(!this.chunks.length){ $('#micStatus').textContent='No audio captured.'; return; }
+    const blob = new Blob(this.chunks, {type: this.mimeType || 'audio/webm'});
+    this.chunks = [];
+    if(blob.size===0){ $('#micStatus').textContent='No audio captured.'; return; }
+    $('#micBtn').disabled = true;
+    $('#micStatus').textContent = 'Transcribing with Whisper… (this can take 5-15s)';
+    try{
+      const text = await transcribeWithWhisper(blob);
+      // Append to whatever's already in the textarea (preserves prior dictation + manual edits)
+      let curr = $('#dictText').value || '';
+      if(curr && !/\s$/.test(curr)) curr += ' ';
+      $('#dictText').value = (curr + text).trimEnd();
+      $('#micStatus').textContent='Transcribed. Tap mic to record more, or Apply.';
+    }catch(e){
+      console.error(e);
+      $('#micStatus').textContent='Whisper failed: '+e.message.slice(0,140);
+    }finally{
+      $('#micBtn').disabled = false;
+    }
+  }
+};
+async function transcribeWithWhisper(blob){
+  const apiKey = await Meta.get('openaiApiKey');
+  if(!apiKey) throw new Error('No OpenAI API key configured');
+  const fd = new FormData();
+  const t = (blob.type||'').toLowerCase();
+  const ext = t.includes('mp4')||t.includes('m4a') ? 'm4a'
+            : t.includes('webm') ? 'webm'
+            : t.includes('ogg')  ? 'ogg'
+            : 'webm';
+  fd.append('file', blob, `audio.${ext}`);
+  fd.append('model','whisper-1');
+  fd.append('language','en');
+  fd.append('prompt', "Plastic surgery case debrief. Sutures: 3-0 monocryl, 4-0 vicryl, 5-0 prolene, PDS, ethilon, MC. Anatomy: galea, fascia, periosteum, dorsal venous network. Eponyms: Bruner zigzag, Dupuytren, Limberg, Karydakis. V-number patient identifier like V1234567. Flaps: rotation, advancement, transposition, propeller, free DIEP, ALT, radial forearm.");
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method:'POST',
+    headers:{ 'Authorization': `Bearer ${apiKey}` },
+    body: fd
+  });
+  if(!res.ok){
+    const err = await res.text();
+    throw new Error(`Whisper ${res.status}: ${err.slice(0,200)}`);
+  }
+  const data = await res.json();
+  return data.text || '';
+}
+
+/* -------- Dictation engine selector -------- */
+async function pickDictEngine(){
+  const k = await Meta.get('openaiApiKey');
+  return k ? Whisper : Dict;
+}
+
 /* -------- Local heuristic parser -------- */
 function parseTranscriptLocal(text){
   const out = {patientId:'', summary:'', markings:'', technicalTips:'', equipment:'', categoryGuess:''};
@@ -1070,12 +1190,11 @@ ${redacted}
 async function applyDictation(){
   const text = $('#dictText').value.trim();
   if(!text){ toast('Nothing to apply'); return; }
-  const useClaude = await Meta.get('useClaudeDict');
   const apiKey = await Meta.get('claudeApiKey');
   let parsed;
   $('#dictApply').textContent='Parsing…';
   try{
-    if(useClaude && apiKey){
+    if(apiKey){
       try{ parsed = await parseTranscriptSmart(text); }
       catch(e){
         console.warn('Smart parse failed, falling back', e);
@@ -1113,11 +1232,20 @@ async function applyDictation(){
 }
 
 async function openDictate(){
+  const openaiKey = await Meta.get('openaiApiKey');
   const seenDisclaimer = await Meta.get('dictDisclaimerSeen');
-  if(seenDisclaimer){ $('#dictDisclaimer').style.display='none'; $('#dictPanel').style.display='block'; }
-  else { $('#dictDisclaimer').style.display='block'; $('#dictPanel').style.display='none'; }
+  // Disclaimer is about Apple/Google browser dictation; if Whisper is in use, skip it.
+  if(openaiKey || seenDisclaimer){
+    $('#dictDisclaimer').style.display='none'; $('#dictPanel').style.display='block';
+  } else {
+    $('#dictDisclaimer').style.display='block'; $('#dictPanel').style.display='none';
+  }
   $('#dictText').value=''; Dict.finalText='';
-  $('#micStatus').textContent = Dict.available() ? 'Tap the mic and dictate your debrief.' : "Speech recognition isn't supported on this browser. Type the debrief instead.";
+  if(openaiKey){
+    $('#micStatus').textContent = Whisper.available() ? 'Tap the mic to record. Audio is transcribed by Whisper (OpenAI).' : "Audio recording isn't supported on this browser.";
+  } else {
+    $('#micStatus').textContent = Dict.available() ? 'Tap the mic and dictate your debrief.' : "Speech recognition isn't supported on this browser. Type the debrief instead.";
+  }
   await refreshSettingsLabels();
   openSheet('dictSheet','dictBack');
 }
@@ -1188,23 +1316,27 @@ WHAT DO I NEED TO IMPROVE/CHANGE AND HOW WILL I DO IT`;
   return (await callClaude(prompt, {max_tokens:2000})).trim();
 }
 async function openIscp(c){
+  const apiKey = await Meta.get('claudeApiKey');
   $('#iscpText').value = buildIscpLocal(c);
   $('#iscpStatus').textContent = '';
   openSheet('iscpSheet','iscpBack');
-  const apiKey = await Meta.get('claudeApiKey');
-  const useClaude = await Meta.get('useClaudeIscp');
-  if(apiKey && useClaude){
-    $('#iscpStatus').innerHTML = '<span class="iscp-spinner"></span> Drafting with Claude…';
-    try{
-      const draft = await buildIscpSmart(c);
-      $('#iscpText').value = draft;
-      $('#iscpStatus').textContent = 'Drafted by Claude. Edit before sending.';
-    }catch(e){
-      console.error(e);
-      $('#iscpStatus').textContent = 'Claude draft failed; using local template. ('+e.message.slice(0,80)+')';
-    }
+  if(apiKey){
+    $('#iscpRegen').style.display = '';
+    $('#iscpRegen').onclick = ()=>generateIscpDraft(c);
+    await generateIscpDraft(c);
   } else {
-    $('#iscpStatus').textContent = 'Local template. Set up Claude API key in Settings for an AI-drafted version.';
+    $('#iscpRegen').style.display = 'none';
+    $('#iscpStatus').textContent = 'Local template. Add a Claude API key in Settings for an AI-drafted reflection.';
+  }
+}
+async function generateIscpDraft(c){
+  $('#iscpStatus').innerHTML = '<span class="iscp-spinner"></span> Drafting with Claude…';
+  try{
+    $('#iscpText').value = await buildIscpSmart(c);
+    $('#iscpStatus').textContent = 'AI draft ready. Edit, then Copy.';
+  }catch(e){
+    console.error(e);
+    $('#iscpStatus').textContent = 'AI draft failed: '+e.message.slice(0,80)+'. Showing local template.';
   }
 }
 async function copyIscp(){
@@ -1336,18 +1468,18 @@ function wire(){
   $('#sWipe').onclick=doWipe;
   $('#sApiKey').onclick=promptApiKey;
   $('#sModel').onclick=promptModel;
-  $('#tUseClaudeDict').addEventListener('change', async (e)=>{ await Meta.set('useClaudeDict', e.target.checked); await refreshSettingsLabels() });
-  $('#tUseClaudeIscp').addEventListener('change', async (e)=>{ await Meta.set('useClaudeIscp', e.target.checked) });
+  $('#sOpenAIKey').onclick=promptOpenAIKey;
 
   $('#dictateBtn').onclick = openDictate;
-  $('#dictClose').onclick = ()=>{ Dict.stop(); closeSheet('dictSheet','dictBack') };
+  const stopAllRecorders = ()=>{ Dict.stop(); Whisper.stop(); Whisper._cleanup(); };
+  $('#dictClose').onclick = ()=>{ stopAllRecorders(); closeSheet('dictSheet','dictBack') };
   $('#dictApply').onclick = applyDictation;
   $('#dictDismiss').onclick = async ()=>{
     await Meta.set('dictDisclaimerSeen', true);
     $('#dictDisclaimer').style.display='none';
     $('#dictPanel').style.display='block';
   };
-  $('#micBtn').onclick = ()=>Dict.toggle();
+  $('#micBtn').onclick = async ()=>{ const engine = await pickDictEngine(); engine.toggle() };
 
   $('#iscpClose').onclick=()=>closeSheet('iscpSheet','iscpBack');
   $('#iscpCopy').onclick=copyIscp;
@@ -1358,7 +1490,7 @@ function wire(){
   $('#editBack').onclick=()=>$('#editCancel').click();
   $('#detailBack').onclick=()=>closeSheet('detailSheet','detailBack');
   $('#setBack').onclick=()=>closeSheet('setSheet','setBack');
-  $('#dictBack').onclick=()=>{ Dict.stop(); closeSheet('dictSheet','dictBack') };
+  $('#dictBack').onclick=()=>{ stopAllRecorders(); closeSheet('dictSheet','dictBack') };
   $('#iscpBack').onclick=()=>closeSheet('iscpSheet','iscpBack');
 
   document.addEventListener('gesturestart', e=>e.preventDefault());
