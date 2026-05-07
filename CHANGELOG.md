@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — 2026-05-07
+
+- **ISCP framing fix**: AI drafts now assume the registrar was the **primary operating surgeon** for the case (not assisting). The prompt sets the level at senior registrar (ST6+ / approaching CCT) and instructs Claude to frame Strengths and "What did I do well" as ownership of decisions and execution, not as observation or junior learning.
+- **New "Refine with feedback" button** on the ISCP sheet (visible whenever a Claude key is configured). Tap it, type free-text feedback (e.g. *"I was the primary surgeon, rewrite to reflect that"* or *"make Recommended Actions more specific to flap design"*), and Claude rewrites the current draft applying the feedback throughout. You can refine repeatedly until the draft is right, then Copy.
+- Tweak: confirm-dialogs that aren't destructive now use the teal primary-action button style instead of the red destructive style.
+
 ## 0.3.0 — 2026-05-07
 
 - **Whisper transcription** (optional). Paste an OpenAI API key in Settings → Smart features → OpenAI API key (Whisper). When set, the Dictate mic button records audio via MediaRecorder, uploads it to OpenAI Whisper after you stop, and inserts the high-accuracy transcript into the textarea. Whisper is biased toward plastic-surgery vocabulary via a tuned prompt (suture sizes, anatomy, eponyms, V-numbers). Falls back to browser Web Speech API when no OpenAI key is configured.

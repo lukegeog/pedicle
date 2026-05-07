@@ -463,6 +463,10 @@
   <div class="sheet-body">
     <div class="iscp-status" id="iscpStatus"></div>
     <textarea id="iscpText" class="iscp-text" spellcheck="false"></textarea>
+    <button class="btn-iscp" id="iscpRefine" style="display:none;width:100%;margin:14px 0 6px;padding:12px;border-radius:10px;font-weight:600;font-size:15px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z"/></svg>
+      Refine with feedback
+    </button>
     <p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin:10px 4px">
       Edit, then tap Copy and paste into the ISCP web form. Patient ID is redacted in any text sent to Claude; the locally-shown copy may include it &mdash; remove it before sharing externally if your ISCP submission requires anonymisation.
     </p>
@@ -813,7 +817,7 @@ function confirmDialog(title,msg,onOk,opts={}){
   if(opts.input){ wrap.style.display='block'; input.value=opts.value||''; input.type=opts.inputType||'text'; input.placeholder=opts.placeholder||''; }
   else { wrap.style.display='none'; }
   $('#confirmOk').textContent=opts.okText||'Delete';
-  $('#confirmOk').className = opts.okText==='Save'?'btn-primary':'btn-confirm';
+  $('#confirmOk').className = (!opts.okText || opts.okText==='Delete') ? 'btn-confirm' : 'btn-primary';
   $('#confirmBack').classList.add('open');
   const ok=$('#confirmOk'), cancel=$('#confirmCancel');
   const cleanup=()=>{ok.onclick=null;cancel.onclick=null;$('#confirmBack').classList.remove('open');$('#confirmOk').className='btn-confirm';$('#confirmOk').textContent='Delete'};
@@ -1292,9 +1296,15 @@ async function buildIscpSmart(c){
   const dateStr = c.dateOfSurgery
     ? new Date(c.dateOfSurgery+'T00:00:00').toLocaleDateString('en-GB')
     : 'unknown';
-  const prompt = `You are helping a UK plastic surgery resident draft a reflective practice entry for the Intercollegiate Surgical Curriculum Programme (ISCP) portfolio. They will review and edit before submitting to their supervising consultant.
+  const prompt = `You are helping a UK plastic surgery senior registrar (ST6+ / SpR-equivalent, approaching CCT) draft a reflective practice entry for the Intercollegiate Surgical Curriculum Programme (ISCP) portfolio. They will review and edit before submitting to their supervising consultant.
 
-Draft thoughtful, mature reflective text under each of the seven headings below. Use first-person, professional UK-medical tone. Be specific to the case content and avoid generic platitudes. Where the case data is sparse for a given heading, propose plausible content the resident can confirm or replace, but stay grounded in what's provided.
+CRITICAL FRAMING:
+- Assume the registrar was the **primary operating surgeon** for this case — they performed the surgery, not assisted. They were responsible for the marking, dissection, key technical decisions, and closure. The supervising consultant supervised but did not do the case.
+- Pitch reflection at competent senior-trainee level: confident clinical reasoning, ownership of intra-operative decisions, anticipation of complications, and awareness of pitfalls.
+- Strengths and "what did I do well" sections should describe what the registrar themselves executed competently — never frame them as assisting, being walked through steps, or seeing a technique for the first time.
+- Development needs and improvement plans should reflect a senior trainee preparing for CCT, not a junior learning fundamentals.
+
+Draft thoughtful, mature reflective text under each of the seven headings below. Use first-person, professional UK-medical tone. Be specific to the case content and avoid generic platitudes. Where the case data is sparse for a given heading, propose plausible content the registrar can confirm or replace, but stay grounded in what's provided.
 
 CASE DATA (patient identifier redacted):
 - Case type: ${cat}
@@ -1315,6 +1325,40 @@ WHAT DID I DO WELL
 WHAT DO I NEED TO IMPROVE/CHANGE AND HOW WILL I DO IT`;
   return (await callClaude(prompt, {max_tokens:2000})).trim();
 }
+async function buildIscpRefine(c, currentDraft, feedback){
+  const cat = catById[c.category]?.label || c.category || 'Unknown';
+  const dateStr = c.dateOfSurgery
+    ? new Date(c.dateOfSurgery+'T00:00:00').toLocaleDateString('en-GB')
+    : 'unknown';
+  const prompt = `You previously drafted an ISCP reflection for a UK plastic surgery senior registrar (ST6+ / SpR-equivalent, approaching CCT) who was the PRIMARY OPERATING SURGEON for this case — they performed the surgery, not assisted. They want the draft refined based on the feedback below.
+
+CASE DATA (patient identifier redacted):
+- Case type: ${cat}
+- Date of surgery: ${dateStr}
+- Summary: ${redactPID(c.summary) || '(none provided)'}
+- Markings: ${redactPID(c.markings) || '(none provided)'}
+- Technical tips: ${redactPID(c.technicalTips) || '(none provided)'}
+- Equipment / sutures: ${redactPID(c.equipment) || '(none provided)'}
+
+CURRENT DRAFT:
+"""
+${redactPID(currentDraft)}
+"""
+
+REGISTRAR'S FEEDBACK / CHANGES REQUESTED:
+"""
+${feedback}
+"""
+
+Produce an updated reflection that incorporates the feedback while preserving useful content from the current draft. Apply the feedback throughout where relevant — not just to one section. Maintain:
+- All seven ALL-CAPS section headings in this exact order: GENERAL CASE DESCRIPTION, STRENGTHS, DEVELOPMENT NEEDS, RECOMMENDED ACTIONS, WHAT DID I LEARN FROM THIS EXPERIENCE, WHAT DID I DO WELL, WHAT DO I NEED TO IMPROVE/CHANGE AND HOW WILL I DO IT
+- First-person UK-medical tone
+- Senior registrar / primary-operating-surgeon framing — never "assistant", "watching", or "junior trainee" language
+- Specificity to the case
+
+Output ONLY the updated reflection text. No preamble, no commentary, no markdown.`;
+  return (await callClaude(prompt, {max_tokens:2200})).trim();
+}
 async function openIscp(c){
   const apiKey = await Meta.get('claudeApiKey');
   $('#iscpText').value = buildIscpLocal(c);
@@ -1323,11 +1367,34 @@ async function openIscp(c){
   if(apiKey){
     $('#iscpRegen').style.display = '';
     $('#iscpRegen').onclick = ()=>generateIscpDraft(c);
+    $('#iscpRefine').style.display = '';
+    $('#iscpRefine').onclick = ()=>refineIscpDraft(c);
     await generateIscpDraft(c);
   } else {
     $('#iscpRegen').style.display = 'none';
+    $('#iscpRefine').style.display = 'none';
     $('#iscpStatus').textContent = 'Local template. Add a Claude API key in Settings for an AI-drafted reflection.';
   }
+}
+async function refineIscpDraft(c){
+  const current = $('#iscpText').value;
+  if(!current.trim()){ toast('Nothing to refine yet'); return; }
+  confirmDialog(
+    'Refine reflection',
+    'What should change? E.g. "I was the primary surgeon — rewrite to reflect that", "make Recommended Actions more specific to flap design", "tone down the strengths section".',
+    async (feedback)=>{
+      if(!feedback || !feedback.trim()) return;
+      $('#iscpStatus').innerHTML = '<span class="iscp-spinner"></span> Refining with your feedback…';
+      try{
+        $('#iscpText').value = await buildIscpRefine(c, current, feedback.trim());
+        $('#iscpStatus').textContent = 'Refined. Tap Refine again for further changes, or Copy when happy.';
+      }catch(e){
+        console.error(e);
+        $('#iscpStatus').textContent = 'Refine failed: '+e.message.slice(0,80);
+      }
+    },
+    { input:true, value:'', placeholder:'What should change?', okText:'Refine' }
+  );
 }
 async function generateIscpDraft(c){
   $('#iscpStatus').innerHTML = '<span class="iscp-spinner"></span> Drafting with Claude…';
