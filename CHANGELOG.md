@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 — 2026-05-07
+
+- **Photo annotation**: open any photo in the fullscreen viewer and tap the new pencil icon to mark it up. Canvas-based pen with five colours (red/blue/green/yellow/white), three stroke widths, undo, clear, save, and cancel. Apple Pencil and finger both work via pointer events. Save flattens the drawing into the photo and replaces it in the case. Available from both the New/Edit sheet (annotate before saving) and the case detail view (annotate already-saved photos). Cancelling discards the strokes.
+
 ## 0.3.1 — 2026-05-07
 
 - **ISCP framing fix**: AI drafts now assume the registrar was the **primary operating surgeon** for the case (not assisting). The prompt sets the level at senior registrar (ST6+ / approaching CCT) and instructs Claude to frame Strengths and "What did I do well" as ownership of decisions and execution, not as observation or junior learning.

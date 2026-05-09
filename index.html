@@ -238,7 +238,26 @@
   .iscp-spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
 
-  @media (max-width:360px){
+  /* Annotator (photo drawing overlay) */
+  #annotator{position:fixed;inset:0;background:#000;z-index:95;display:none;flex-direction:column}
+  .anno-top{background:rgba(0,0,0,.85);color:#fff;padding:calc(10px + var(--safe-top)) 14px 10px;display:flex;align-items:center;gap:12px;flex:0 0 auto}
+  .anno-top button{color:#fff;padding:8px 14px;border-radius:8px;font-weight:600;font-size:15px}
+  .anno-top button.primary{background:var(--accent)}
+  .anno-title{flex:1;text-align:center;color:#fff;font-weight:600;font-size:16px}
+  .anno-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none;background:#1a1a1a}
+  #annoCanvas{max-width:100%;max-height:100%;display:block;cursor:crosshair}
+  .anno-bottom{background:rgba(0,0,0,.85);padding:10px 14px calc(10px + var(--safe-bot));display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 auto;flex-wrap:wrap}
+  .anno-colors,.anno-widths,.anno-actions{display:flex;gap:6px;align-items:center}
+  .anno-color{width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.25);padding:0;transition:all .15s}
+  .anno-color.active{border-color:#fff;transform:scale(1.18)}
+  .anno-width{width:36px;height:36px;display:grid;place-items:center;background:rgba(255,255,255,.08);border-radius:8px}
+  .anno-width.active{background:rgba(255,255,255,.28)}
+  .anno-width .dot{display:block;background:#fff;border-radius:50%}
+  .anno-actions button{width:36px;height:36px;background:rgba(255,255,255,.08);border-radius:8px;color:#fff;font-size:18px}
+  .viewer-anno{position:absolute;top:calc(12px + var(--safe-top));right:64px;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;display:grid;place-items:center;backdrop-filter:blur(10px)}
+  .viewer-anno svg{width:20px;height:20px}
+
+    @media (max-width:360px){
     .cat-grid{grid-template-columns:1fr}
     .pin-pad{grid-template-columns:repeat(3,68px);gap:10px}
     .pin-key{width:68px;height:68px;font-size:22px}
@@ -475,10 +494,43 @@
 
 <!-- ======= PHOTO VIEWER ======= -->
 <div class="viewer" id="viewer">
+  <button class="viewer-anno" id="viewerAnno" aria-label="Annotate" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+  </button>
   <button class="close" id="viewerClose" aria-label="Close">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
   </button>
   <img id="viewerImg" alt=""/>
+</div>
+
+<!-- ======= ANNOTATOR ======= -->
+<div id="annotator">
+  <div class="anno-top">
+    <button id="annoCancel">Cancel</button>
+    <span class="anno-title">Annotate photo</span>
+    <button id="annoSave" class="primary">Save</button>
+  </div>
+  <div class="anno-stage">
+    <canvas id="annoCanvas"></canvas>
+  </div>
+  <div class="anno-bottom">
+    <div class="anno-colors" role="radiogroup" aria-label="Colour">
+      <button class="anno-color" data-color="#dc2626" style="background:#dc2626" aria-label="Red"></button>
+      <button class="anno-color" data-color="#2563eb" style="background:#2563eb" aria-label="Blue"></button>
+      <button class="anno-color" data-color="#16a34a" style="background:#16a34a" aria-label="Green"></button>
+      <button class="anno-color" data-color="#fde047" style="background:#fde047" aria-label="Yellow"></button>
+      <button class="anno-color" data-color="#ffffff" style="background:#ffffff" aria-label="White"></button>
+    </div>
+    <div class="anno-widths" role="radiogroup" aria-label="Stroke width">
+      <button class="anno-width" data-width="3" aria-label="Thin"><span class="dot" style="width:6px;height:6px"></span></button>
+      <button class="anno-width" data-width="6" aria-label="Medium"><span class="dot" style="width:10px;height:10px"></span></button>
+      <button class="anno-width" data-width="12" aria-label="Thick"><span class="dot" style="width:14px;height:14px"></span></button>
+    </div>
+    <div class="anno-actions">
+      <button id="annoUndo" aria-label="Undo last stroke">↶</button>
+      <button id="annoClear" aria-label="Clear all">✕</button>
+    </div>
+  </div>
 </div>
 
 <!-- ======= CONFIRM MODAL ======= -->
@@ -702,7 +754,13 @@ function renderPhotoGrid(){
   state.editPhotos.forEach((blob,i)=>{
     const tile=document.createElement('div'); tile.className='photo-tile';
     tile.innerHTML=`<img src="${urlFor(blob)}" alt=""/><button type="button" class="rm" aria-label="Remove">&times;</button>`;
-    tile.querySelector('img').onclick=()=>showViewer(urlFor(blob));
+    tile.querySelector('img').onclick = ()=>showViewer({
+      url: urlFor(blob),
+      onAnnotate: async ()=>{
+        const newBlob = await annotatePhoto(state.editPhotos[i]);
+        if(newBlob){ state.editPhotos[i] = newBlob; renderPhotoGrid(); toast('Annotated'); }
+      },
+    });
     tile.querySelector('.rm').onclick=()=>{state.editPhotos.splice(i,1); renderPhotoGrid()};
     g.appendChild(tile);
   });
@@ -761,7 +819,7 @@ async function openDetail(id){
   $('#detailTitle').textContent=c.patientId||'Case';
   const cat=catById[c.category]||{label:c.category,cls:''};
   const photosHtml = (c.photos||[]).length
-    ? `<div class="detail-section"><h3>Photos</h3><div class="photo-grid">${c.photos.map(b=>`<div class="photo-tile"><img src="${urlFor(b)}" data-url="${urlFor(b)}" alt=""/></div>`).join('')}</div></div>`
+    ? `<div class="detail-section"><h3>Photos</h3><div class="photo-grid">${c.photos.map((b,idx)=>`<div class="photo-tile"><img src="${urlFor(b)}" data-url="${urlFor(b)}" data-idx="${idx}" alt=""/></div>`).join('')}</div></div>`
     : '';
   const dateLabel = c.dateOfSurgery
     ? formatGB(c.dateOfSurgery)
@@ -800,7 +858,23 @@ async function openDetail(id){
     toast('Deleted');
   });
   $('#dIscp').onclick=()=>openIscp(c);
-  $$('#detailBody img').forEach(img=>img.onclick=()=>showViewer(img.dataset.url||img.src));
+  $$('#detailBody img').forEach(img=>{
+    const idx = parseInt(img.dataset.idx);
+    img.onclick = ()=>showViewer({
+      url: img.dataset.url || img.src,
+      onAnnotate: isNaN(idx) ? null : async ()=>{
+        const newBlob = await annotatePhoto(c.photos[idx]);
+        if(newBlob){
+          c.photos[idx] = newBlob;
+          c.updatedAt = Date.now();
+          await CaseStore.put(c);
+          state.cases = await CaseStore.getAll();
+          openDetail(c.id);
+          toast('Annotated');
+        }
+      },
+    });
+  });
   openSheet('detailSheet','detailBack');
 }
 
@@ -809,7 +883,162 @@ async function openDetail(id){
    ============================================================ */
 function openSheet(s,b){$('#'+s).classList.add('open');$('#'+s).setAttribute('aria-hidden','false');$('#'+b).classList.add('open');document.body.style.overflow='hidden'}
 function closeSheet(s,b){$('#'+s).classList.remove('open');$('#'+s).setAttribute('aria-hidden','true');$('#'+b).classList.remove('open');if(!document.querySelector('.sheet.open')) document.body.style.overflow=''}
-function showViewer(u){$('#viewerImg').src=u;$('#viewer').classList.add('open')}
+function showViewer(arg){
+  const opts = (typeof arg === 'string') ? {url: arg} : arg;
+  $('#viewerImg').src = opts.url;
+  const annoBtn = $('#viewerAnno');
+  if(opts.onAnnotate){
+    annoBtn.style.display = '';
+    annoBtn.onclick = ()=>{ $('#viewer').classList.remove('open'); opts.onAnnotate() };
+  } else {
+    annoBtn.style.display = 'none';
+    annoBtn.onclick = null;
+  }
+  $('#viewer').classList.add('open');
+}
+
+/* -------- Photo annotator (canvas drawing on stored photos) -------- */
+const Annotator = {
+  canvas:null, ctx:null, baseImg:null,
+  isDrawing:false, strokes:[], currentStroke:null,
+  color:'#dc2626', width:6,
+  _resolve:null, _bound:false, _h:null,
+
+  open(blob){
+    return new Promise(async (resolve)=>{
+      this._resolve = resolve;
+      try{
+        const url = URL.createObjectURL(blob);
+        this.baseImg = new Image();
+        await new Promise((rs,rj)=>{ this.baseImg.onload=rs; this.baseImg.onerror=rj; this.baseImg.src=url; });
+        URL.revokeObjectURL(url);
+        this.canvas = $('#annoCanvas');
+        this.canvas.width = this.baseImg.naturalWidth;
+        this.canvas.height = this.baseImg.naturalHeight;
+        this.ctx = this.canvas.getContext('2d');
+        this.ctx.lineCap = 'round'; this.ctx.lineJoin = 'round';
+        this.strokes = []; this.currentStroke = null;
+        this._redraw();
+        $('#annotator').style.display = 'flex';
+        this._setColor(this.color);
+        this._setWidth(this.width);
+        this._bind();
+      }catch(e){
+        console.error(e); toast("Couldn't load photo"); this._finish(null);
+      }
+    });
+  },
+  cancel(){ this._finish(null) },
+  async save(){
+    if(this.strokes.length === 0){ this._finish(null); return; }
+    const blob = await new Promise(r=>this.canvas.toBlob(r,'image/jpeg',0.88));
+    this._finish(blob);
+  },
+  undo(){ if(!this.strokes.length) return; this.strokes.pop(); this._redraw(); },
+  clear(){ if(!this.strokes.length) return; this.strokes = []; this._redraw(); },
+  setColor(c){ this._setColor(c) },
+  setWidth(w){ this._setWidth(w) },
+  _setColor(c){
+    this.color = c;
+    $$('.anno-color').forEach(b=>b.classList.toggle('active', b.dataset.color === c));
+  },
+  _setWidth(w){
+    this.width = w;
+    $$('.anno-width').forEach(b=>b.classList.toggle('active', parseInt(b.dataset.width) === w));
+  },
+  _finish(blob){
+    $('#annotator').style.display = 'none';
+    this._unbind();
+    this.strokes = []; this.currentStroke = null; this.baseImg = null;
+    if(this._resolve){ const r = this._resolve; this._resolve = null; r(blob); }
+  },
+  _redraw(){
+    if(!this.ctx || !this.baseImg) return;
+    this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+    this.ctx.drawImage(this.baseImg, 0, 0);
+    for(const s of this.strokes) this._strokePath(s);
+  },
+  _strokePath(s){
+    if(!s.points.length) return;
+    if(s.points.length === 1){
+      this.ctx.beginPath();
+      this.ctx.fillStyle = s.color;
+      this.ctx.arc(s.points[0].x, s.points[0].y, s.width/2, 0, Math.PI*2);
+      this.ctx.fill();
+      return;
+    }
+    this.ctx.strokeStyle = s.color;
+    this.ctx.lineWidth = s.width;
+    this.ctx.beginPath();
+    this.ctx.moveTo(s.points[0].x, s.points[0].y);
+    for(let i=1;i<s.points.length;i++) this.ctx.lineTo(s.points[i].x, s.points[i].y);
+    this.ctx.stroke();
+  },
+  _getPos(e){
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = this.canvas.width / rect.width;
+    const sy = this.canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+  },
+  _onDown(e){
+    e.preventDefault();
+    try{ this.canvas.setPointerCapture(e.pointerId) }catch(_){}
+    this.isDrawing = true;
+    this.currentStroke = { color:this.color, width:this.width, points:[this._getPos(e)] };
+    this._drawLastSegment();
+  },
+  _onMove(e){
+    if(!this.isDrawing) return;
+    e.preventDefault();
+    this.currentStroke.points.push(this._getPos(e));
+    this._drawLastSegment();
+  },
+  _onUp(e){
+    if(!this.isDrawing) return;
+    this.isDrawing = false;
+    try{ this.canvas.releasePointerCapture(e.pointerId) }catch(_){}
+    if(this.currentStroke){ this.strokes.push(this.currentStroke); this.currentStroke = null; }
+  },
+  _drawLastSegment(){
+    if(!this.currentStroke) return;
+    const pts = this.currentStroke.points;
+    if(pts.length === 1){
+      this.ctx.beginPath();
+      this.ctx.fillStyle = this.currentStroke.color;
+      this.ctx.arc(pts[0].x, pts[0].y, this.currentStroke.width/2, 0, Math.PI*2);
+      this.ctx.fill();
+      return;
+    }
+    const a = pts[pts.length-2], b = pts[pts.length-1];
+    this.ctx.strokeStyle = this.currentStroke.color;
+    this.ctx.lineWidth = this.currentStroke.width;
+    this.ctx.beginPath();
+    this.ctx.moveTo(a.x, a.y); this.ctx.lineTo(b.x, b.y);
+    this.ctx.stroke();
+  },
+  _bind(){
+    if(this._bound) return;
+    const c = this.canvas;
+    this._h = { down:e=>this._onDown(e), move:e=>this._onMove(e), up:e=>this._onUp(e) };
+    c.addEventListener('pointerdown', this._h.down);
+    c.addEventListener('pointermove', this._h.move);
+    c.addEventListener('pointerup', this._h.up);
+    c.addEventListener('pointercancel', this._h.up);
+    c.addEventListener('pointerleave', this._h.up);
+    this._bound = true;
+  },
+  _unbind(){
+    if(!this._bound || !this.canvas) return;
+    const c = this.canvas, h = this._h;
+    c.removeEventListener('pointerdown', h.down);
+    c.removeEventListener('pointermove', h.move);
+    c.removeEventListener('pointerup', h.up);
+    c.removeEventListener('pointercancel', h.up);
+    c.removeEventListener('pointerleave', h.up);
+    this._bound = false;
+  },
+};
+async function annotatePhoto(blob){ return Annotator.open(blob) }
 function confirmDialog(title,msg,onOk,opts={}){
   $('#confirmTitle').textContent=title;
   $('#confirmMsg').textContent=msg;
@@ -1553,6 +1782,13 @@ function wire(){
 
   $('#viewerClose').onclick=()=>$('#viewer').classList.remove('open');
   $('#viewer').onclick=(e)=>{if(e.target.id==='viewer') $('#viewer').classList.remove('open')};
+  // Annotator
+  $('#annoCancel').onclick = ()=>Annotator.cancel();
+  $('#annoSave').onclick   = ()=>Annotator.save();
+  $('#annoUndo').onclick   = ()=>Annotator.undo();
+  $('#annoClear').onclick  = ()=>Annotator.clear();
+  $$('.anno-color').forEach(b=>b.onclick=()=>Annotator.setColor(b.dataset.color));
+  $$('.anno-width').forEach(b=>b.onclick=()=>Annotator.setWidth(parseInt(b.dataset.width)));
 
   $('#editBack').onclick=()=>$('#editCancel').click();
   $('#detailBack').onclick=()=>closeSheet('detailSheet','detailBack');
