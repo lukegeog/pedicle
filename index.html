@@ -160,8 +160,8 @@
   .photo-tile{position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;background:var(--surface-2)}
   .photo-tile img{width:100%;height:100%;object-fit:cover;display:block}
   .photo-tile .rm{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:grid;place-items:center;font-size:14px;line-height:1}
-  .photo-tile .drag-handle{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:6px;background:rgba(0,0,0,.5);color:#fff;display:grid;place-items:center;font-size:15px;touch-action:none;cursor:grab;user-select:none}
-  .photo-tile.drag-over{outline:2px solid var(--accent);outline-offset:-2px;transform:scale(1.04)}
+  .photo-tile .drag-handle{position:absolute;top:3px;left:3px;width:28px;height:28px;border-radius:7px;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:16px;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+  .photo-tile.drag-over{outline:3px solid var(--accent);outline-offset:-3px}
   .add-photo{aspect-ratio:1/1;border-radius:10px;background:var(--surface-2);border:2px dashed var(--border);display:grid;place-items:center;color:var(--text-muted);font-size:13px;font-weight:500;gap:4px}
   .add-photo svg{width:24px;height:24px}
   .add-photo input{display:none}
@@ -785,57 +785,61 @@ function renderPhotoGrid(){
   g.appendChild(add);
 }
 function setupGridDrag(grid){
-  if(state.editPhotos.length < 2) return; // nothing to reorder
-  let dragIdx=-1, overIdx=-1, ghost=null, origTile=null, startX=0, startY=0;
+  if(state.editPhotos.length < 2) return;
+  let dragIdx=-1, overIdx=-1, ghost=null, origTile=null, origRect=null, startX=0, startY=0;
 
-  function endDrag(){
+  function clearDrag(){
     if(ghost){ ghost.remove(); ghost=null; }
     if(origTile) origTile.style.opacity='';
     [...grid.querySelectorAll('.photo-tile')].forEach(t=>t.classList.remove('drag-over'));
-    if(overIdx>=0 && overIdx!==dragIdx){
-      const moved=state.editPhotos.splice(dragIdx,1)[0];
-      state.editPhotos.splice(overIdx,0,moved);
-      renderPhotoGrid();
-    }
-    dragIdx=-1; overIdx=-1; origTile=null;
-    document.removeEventListener('pointermove',onMove);
-    document.removeEventListener('pointerup',endDrag);
-  }
-
-  function onMove(e){
-    if(dragIdx<0||!ghost) return;
-    e.preventDefault();
-    const rect=origTile.getBoundingClientRect();
-    const dx=e.clientX-startX, dy=e.clientY-startY;
-    ghost.style.left=(rect.left+dx)+'px';
-    ghost.style.top=(rect.top+dy)+'px';
-    ghost.style.display='none';
-    const under=document.elementFromPoint(e.clientX,e.clientY);
-    ghost.style.display='';
-    const target=under?.closest('.photo-tile');
-    const tiles=[...grid.querySelectorAll('.photo-tile')];
-    tiles.forEach(t=>t.classList.remove('drag-over'));
-    if(target && target!==origTile){
-      overIdx=parseInt(target.dataset.idx);
-      target.classList.add('drag-over');
-    } else { overIdx=-1; }
+    dragIdx=-1; overIdx=-1; origTile=null; origRect=null;
   }
 
   grid.querySelectorAll('.drag-handle').forEach(handle=>{
-    handle.addEventListener('pointerdown',(e)=>{
+    handle.addEventListener('touchstart',(e)=>{
       e.preventDefault(); e.stopPropagation();
       const tile=handle.closest('.photo-tile');
       dragIdx=parseInt(tile.dataset.idx);
       origTile=tile;
-      startX=e.clientX; startY=e.clientY;
-      const r=tile.getBoundingClientRect();
+      origRect=tile.getBoundingClientRect();
+      const t=e.touches[0];
+      startX=t.clientX; startY=t.clientY;
       ghost=tile.cloneNode(true);
-      ghost.style.cssText=`position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;opacity:.75;pointer-events:none;z-index:999;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:none`;
+      ghost.style.cssText=`position:fixed;left:${origRect.left}px;top:${origRect.top}px;width:${origRect.width}px;height:${origRect.height}px;opacity:.8;pointer-events:none;z-index:999;border-radius:10px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.4);transition:none`;
       document.body.appendChild(ghost);
-      tile.style.opacity='.25';
-      document.addEventListener('pointermove',onMove,{passive:false});
-      document.addEventListener('pointerup',endDrag);
+      tile.style.opacity='.2';
+    },{passive:false});
+
+    handle.addEventListener('touchmove',(e)=>{
+      if(dragIdx<0||!ghost) return;
+      e.preventDefault(); e.stopPropagation();
+      const t=e.touches[0];
+      const dx=t.clientX-startX, dy=t.clientY-startY;
+      ghost.style.left=(origRect.left+dx)+'px';
+      ghost.style.top=(origRect.top+dy)+'px';
+      ghost.style.visibility='hidden';
+      const under=document.elementFromPoint(t.clientX,t.clientY);
+      ghost.style.visibility='';
+      const target=under?.closest?.('.photo-tile');
+      [...grid.querySelectorAll('.photo-tile')].forEach(t=>t.classList.remove('drag-over'));
+      if(target && target!==origTile){
+        overIdx=parseInt(target.dataset.idx);
+        target.classList.add('drag-over');
+      } else { overIdx=-1; }
+    },{passive:false});
+
+    handle.addEventListener('touchend',(e)=>{
+      const commit=overIdx>=0 && overIdx!==dragIdx;
+      const from=dragIdx, to=overIdx;
+      clearDrag();
+      if(commit){
+        const moved=state.editPhotos.splice(from,1)[0];
+        state.editPhotos.splice(to,0,moved);
+        renderPhotoGrid();
+      }
     });
+
+    handle.addEventListener('touchcancel',()=>clearDrag());
   });
 }
 
