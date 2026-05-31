@@ -160,6 +160,8 @@
   .photo-tile{position:relative;aspect-ratio:1/1;border-radius:10px;overflow:hidden;background:var(--surface-2)}
   .photo-tile img{width:100%;height:100%;object-fit:cover;display:block}
   .photo-tile .rm{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:grid;place-items:center;font-size:14px;line-height:1}
+  .photo-tile .drag-handle{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:6px;background:rgba(0,0,0,.5);color:#fff;display:grid;place-items:center;font-size:15px;touch-action:none;cursor:grab;user-select:none}
+  .photo-tile.drag-over{outline:2px solid var(--accent);outline-offset:-2px;transform:scale(1.04)}
   .add-photo{aspect-ratio:1/1;border-radius:10px;background:var(--surface-2);border:2px dashed var(--border);display:grid;place-items:center;color:var(--text-muted);font-size:13px;font-weight:500;gap:4px}
   .add-photo svg{width:24px;height:24px}
   .add-photo input{display:none}
@@ -183,7 +185,9 @@
 
   .viewer{position:fixed;inset:0;background:#000;z-index:80;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
   .viewer.open{opacity:1;pointer-events:auto}
-  .viewer img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}
+  .viewer img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none;transform-origin:center center;will-change:transform}
+  .viewer-hint{position:absolute;bottom:calc(24px + var(--safe-bottom,0px));left:50%;transform:translateX(-50%);background:rgba(255,255,255,.15);color:#fff;font-size:12px;padding:6px 14px;border-radius:20px;backdrop-filter:blur(10px);pointer-events:none;opacity:1;transition:opacity 1.5s 1.5s}
+  .viewer-hint.hide{opacity:0}
   .viewer .close{position:absolute;top:calc(12px + var(--safe-top));right:12px;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;display:grid;place-items:center;backdrop-filter:blur(10px)}
 
   .lock{position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px}
@@ -501,6 +505,7 @@
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
   </button>
   <img id="viewerImg" alt=""/>
+  <div class="viewer-hint" id="viewerHint">Pinch or double-tap to zoom</div>
 </div>
 
 <!-- ======= ANNOTATOR ======= -->
@@ -752,8 +757,8 @@ function renderCatGrid(selected){
 function renderPhotoGrid(){
   const g=$('#photoGrid'); g.innerHTML='';
   state.editPhotos.forEach((blob,i)=>{
-    const tile=document.createElement('div'); tile.className='photo-tile';
-    tile.innerHTML=`<img src="${urlFor(blob)}" alt=""/><button type="button" class="rm" aria-label="Remove">&times;</button>`;
+    const tile=document.createElement('div'); tile.className='photo-tile'; tile.dataset.idx=i;
+    tile.innerHTML=`<img src="${urlFor(blob)}" alt=""/><button type="button" class="rm" aria-label="Remove">&times;</button><div class="drag-handle" title="Drag to reorder">⠿</div>`;
     tile.querySelector('img').onclick = ()=>showViewer({
       url: urlFor(blob),
       onAnnotate: async ()=>{
@@ -764,6 +769,7 @@ function renderPhotoGrid(){
     tile.querySelector('.rm').onclick=()=>{state.editPhotos.splice(i,1); renderPhotoGrid()};
     g.appendChild(tile);
   });
+  setupGridDrag(g);
   const add=document.createElement('label'); add.className='add-photo';
   add.innerHTML=`
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -778,6 +784,61 @@ function renderPhotoGrid(){
   };
   g.appendChild(add);
 }
+function setupGridDrag(grid){
+  if(state.editPhotos.length < 2) return; // nothing to reorder
+  let dragIdx=-1, overIdx=-1, ghost=null, origTile=null, startX=0, startY=0;
+
+  function endDrag(){
+    if(ghost){ ghost.remove(); ghost=null; }
+    if(origTile) origTile.style.opacity='';
+    [...grid.querySelectorAll('.photo-tile')].forEach(t=>t.classList.remove('drag-over'));
+    if(overIdx>=0 && overIdx!==dragIdx){
+      const moved=state.editPhotos.splice(dragIdx,1)[0];
+      state.editPhotos.splice(overIdx,0,moved);
+      renderPhotoGrid();
+    }
+    dragIdx=-1; overIdx=-1; origTile=null;
+    document.removeEventListener('pointermove',onMove);
+    document.removeEventListener('pointerup',endDrag);
+  }
+
+  function onMove(e){
+    if(dragIdx<0||!ghost) return;
+    e.preventDefault();
+    const rect=origTile.getBoundingClientRect();
+    const dx=e.clientX-startX, dy=e.clientY-startY;
+    ghost.style.left=(rect.left+dx)+'px';
+    ghost.style.top=(rect.top+dy)+'px';
+    ghost.style.display='none';
+    const under=document.elementFromPoint(e.clientX,e.clientY);
+    ghost.style.display='';
+    const target=under?.closest('.photo-tile');
+    const tiles=[...grid.querySelectorAll('.photo-tile')];
+    tiles.forEach(t=>t.classList.remove('drag-over'));
+    if(target && target!==origTile){
+      overIdx=parseInt(target.dataset.idx);
+      target.classList.add('drag-over');
+    } else { overIdx=-1; }
+  }
+
+  grid.querySelectorAll('.drag-handle').forEach(handle=>{
+    handle.addEventListener('pointerdown',(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const tile=handle.closest('.photo-tile');
+      dragIdx=parseInt(tile.dataset.idx);
+      origTile=tile;
+      startX=e.clientX; startY=e.clientY;
+      const r=tile.getBoundingClientRect();
+      ghost=tile.cloneNode(true);
+      ghost.style.cssText=`position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;opacity:.75;pointer-events:none;z-index:999;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:none`;
+      document.body.appendChild(ghost);
+      tile.style.opacity='.25';
+      document.addEventListener('pointermove',onMove,{passive:false});
+      document.addEventListener('pointerup',endDrag);
+    });
+  });
+}
+
 async function saveCase(){
   const patientId=$('#fId').value.trim();
   const dateOfSurgery=$('#fDate').value || '';
@@ -894,8 +955,82 @@ function showViewer(arg){
     annoBtn.style.display = 'none';
     annoBtn.onclick = null;
   }
+  resetViewerZoom();
   $('#viewer').classList.add('open');
+  // Show hint briefly on first open
+  const hint=$('#viewerHint');
+  if(hint){ hint.classList.remove('hide'); clearTimeout(hint._t); hint._t=setTimeout(()=>hint.classList.add('hide'),3000); }
 }
+
+/* -------- Viewer zoom / pan -------- */
+const viewerZoom = { scale:1, tx:0, ty:0, lastTap:0 };
+function resetViewerZoom(){
+  viewerZoom.scale=1; viewerZoom.tx=0; viewerZoom.ty=0;
+  $('#viewerImg').style.transform='';
+}
+function applyViewerTransform(){
+  $('#viewerImg').style.transform=`translate(${viewerZoom.tx}px,${viewerZoom.ty}px) scale(${viewerZoom.scale})`;
+}
+(function setupViewerZoom(){
+  const el=$('#viewer');
+  let lastDist=0, lastMid={x:0,y:0}, panStart=null, activeTouches=[];
+
+  el.addEventListener('touchstart',(e)=>{
+    activeTouches=[...e.touches];
+    if(e.touches.length===1){
+      const now=Date.now();
+      if(now-viewerZoom.lastTap<300 && viewerZoom.lastTap>0){
+        // double-tap toggle
+        if(viewerZoom.scale>1){ resetViewerZoom(); }
+        else { viewerZoom.scale=2.5; applyViewerTransform(); }
+        viewerZoom.lastTap=0;
+        e.preventDefault(); return;
+      }
+      viewerZoom.lastTap=now;
+      if(viewerZoom.scale>1){
+        panStart={x:e.touches[0].clientX-viewerZoom.tx, y:e.touches[0].clientY-viewerZoom.ty};
+        e.preventDefault();
+      }
+    } else if(e.touches.length===2){
+      lastDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      lastMid={x:(e.touches[0].clientX+e.touches[1].clientX)/2, y:(e.touches[0].clientY+e.touches[1].clientY)/2};
+      e.preventDefault();
+    }
+  },{passive:false});
+
+  el.addEventListener('touchmove',(e)=>{
+    if(e.touches.length===2){
+      e.preventDefault();
+      const dist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      const mid={x:(e.touches[0].clientX+e.touches[1].clientX)/2, y:(e.touches[0].clientY+e.touches[1].clientY)/2};
+      viewerZoom.scale=Math.min(6,Math.max(1,viewerZoom.scale*(dist/lastDist)));
+      viewerZoom.tx+=mid.x-lastMid.x;
+      viewerZoom.ty+=mid.y-lastMid.y;
+      lastDist=dist; lastMid=mid;
+      applyViewerTransform();
+    } else if(e.touches.length===1 && panStart && viewerZoom.scale>1){
+      e.preventDefault();
+      viewerZoom.tx=e.touches[0].clientX-panStart.x;
+      viewerZoom.ty=e.touches[0].clientY-panStart.y;
+      applyViewerTransform();
+    }
+  },{passive:false});
+
+  el.addEventListener('touchend',(e)=>{
+    activeTouches=[...e.touches];
+    if(e.touches.length<2) lastDist=0;
+    if(e.touches.length===0) panStart=null;
+    if(viewerZoom.scale<1.05) resetViewerZoom();
+  });
+
+  // Desktop scroll-to-zoom
+  el.addEventListener('wheel',(e)=>{
+    e.preventDefault();
+    viewerZoom.scale=Math.min(6,Math.max(1,viewerZoom.scale*(e.deltaY<0?1.15:0.87)));
+    if(viewerZoom.scale<=1.02) resetViewerZoom();
+    else applyViewerTransform();
+  },{passive:false});
+})();
 
 /* -------- Photo annotator (canvas drawing on stored photos) -------- */
 const Annotator = {
@@ -1780,8 +1915,8 @@ function wire(){
   $('#iscpClose').onclick=()=>closeSheet('iscpSheet','iscpBack');
   $('#iscpCopy').onclick=copyIscp;
 
-  $('#viewerClose').onclick=()=>$('#viewer').classList.remove('open');
-  $('#viewer').onclick=(e)=>{if(e.target.id==='viewer') $('#viewer').classList.remove('open')};
+  $('#viewerClose').onclick=()=>{ resetViewerZoom(); $('#viewer').classList.remove('open'); };
+  $('#viewer').onclick=(e)=>{if(e.target.id==='viewer' && viewerZoom.scale<=1){ resetViewerZoom(); $('#viewer').classList.remove('open'); }};
   // Annotator
   $('#annoCancel').onclick = ()=>Annotator.cancel();
   $('#annoSave').onclick   = ()=>Annotator.save();
