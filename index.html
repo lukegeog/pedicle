@@ -249,7 +249,9 @@
   .anno-top button.primary{background:var(--accent)}
   .anno-title{flex:1;text-align:center;color:#fff;font-weight:600;font-size:16px}
   .anno-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none;background:#1a1a1a}
-  #annoCanvas{max-width:100%;max-height:100%;display:block;cursor:crosshair}
+  #annoCanvas{max-width:100%;max-height:100%;display:block;cursor:crosshair;transform-origin:center center;will-change:transform}
+  #annoZoomInd{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.65);color:#fff;font-size:13px;font-weight:700;padding:4px 12px;border-radius:12px;pointer-events:none;display:none}
+  #annoZoomReset{position:absolute;top:8px;right:10px;background:rgba(255,255,255,.15);color:#fff;font-size:13px;font-weight:600;padding:5px 11px;border-radius:10px;display:none;backdrop-filter:blur(8px)}
   .anno-bottom{background:rgba(0,0,0,.85);padding:10px 14px calc(10px + var(--safe-bot));display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 auto;flex-wrap:wrap}
   .anno-colors,.anno-widths,.anno-actions{display:flex;gap:6px;align-items:center}
   .anno-color{width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.25);padding:0;transition:all .15s}
@@ -517,6 +519,8 @@
   </div>
   <div class="anno-stage">
     <canvas id="annoCanvas"></canvas>
+    <div id="annoZoomInd"></div>
+    <button id="annoZoomReset">Reset zoom</button>
   </div>
   <div class="anno-bottom">
     <div class="anno-colors" role="radiogroup" aria-label="Colour">
@@ -1042,10 +1046,15 @@ const Annotator = {
   isDrawing:false, strokes:[], currentStroke:null,
   color:'#dc2626', width:6,
   _resolve:null, _bound:false, _h:null,
+  _activePointers: new Set(),
+  _zoom: {scale:1, tx:0, ty:0},
+  _lastTap: 0,
 
   open(blob){
     return new Promise(async (resolve)=>{
       this._resolve = resolve;
+      this._resetZoom();
+      this._activePointers.clear();
       try{
         const url = URL.createObjectURL(blob);
         this.baseImg = new Image();
@@ -1085,7 +1094,21 @@ const Annotator = {
     this.width = w;
     $$('.anno-width').forEach(b=>b.classList.toggle('active', parseInt(b.dataset.width) === w));
   },
+  _applyZoom(){
+    if(!this.canvas) return;
+    const z = this._zoom;
+    this.canvas.style.transform = z.scale <= 1 ? '' : `translate(${z.tx}px,${z.ty}px) scale(${z.scale})`;
+    const ind = $('#annoZoomInd'), rst = $('#annoZoomReset');
+    const zoomed = z.scale > 1.05;
+    if(ind){ ind.textContent = Math.round(z.scale*10)/10+'×'; ind.style.display = zoomed ? '' : 'none'; }
+    if(rst) rst.style.display = zoomed ? '' : 'none';
+  },
+  _resetZoom(){
+    this._zoom = {scale:1, tx:0, ty:0};
+    this._applyZoom();
+  },
   _finish(blob){
+    this._resetZoom();
     $('#annotator').style.display = 'none';
     this._unbind();
     this.strokes = []; this.currentStroke = null; this.baseImg = null;
@@ -1120,6 +1143,12 @@ const Annotator = {
     return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
   },
   _onDown(e){
+    this._activePointers.add(e.pointerId);
+    if(this._activePointers.size > 1){
+      // Second finger — cancel any in-progress stroke, let touch handlers do zoom
+      if(this.isDrawing){ this.isDrawing = false; this.currentStroke = null; this._redraw(); }
+      return;
+    }
     e.preventDefault();
     try{ this.canvas.setPointerCapture(e.pointerId) }catch(_){}
     this.isDrawing = true;
@@ -1127,12 +1156,13 @@ const Annotator = {
     this._drawLastSegment();
   },
   _onMove(e){
-    if(!this.isDrawing) return;
+    if(!this.isDrawing || this._activePointers.size > 1) return;
     e.preventDefault();
     this.currentStroke.points.push(this._getPos(e));
     this._drawLastSegment();
   },
   _onUp(e){
+    this._activePointers.delete(e.pointerId);
     if(!this.isDrawing) return;
     this.isDrawing = false;
     try{ this.canvas.releasePointerCapture(e.pointerId) }catch(_){}
@@ -1158,22 +1188,57 @@ const Annotator = {
   _bind(){
     if(this._bound) return;
     const c = this.canvas;
+    const stage = $('.anno-stage');
     this._h = { down:e=>this._onDown(e), move:e=>this._onMove(e), up:e=>this._onUp(e) };
     c.addEventListener('pointerdown', this._h.down);
     c.addEventListener('pointermove', this._h.move);
     c.addEventListener('pointerup', this._h.up);
     c.addEventListener('pointercancel', this._h.up);
     c.addEventListener('pointerleave', this._h.up);
+
+    // Pinch zoom + double-tap on the stage
+    let lastDist=0, lastMid={x:0,y:0};
+    this._h.tstart = (e)=>{
+      if(e.touches.length===2){
+        lastDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        lastMid={x:(e.touches[0].clientX+e.touches[1].clientX)/2,y:(e.touches[0].clientY+e.touches[1].clientY)/2};
+      } else if(e.touches.length===1){
+        const now=Date.now();
+        if(now-this._lastTap<300 && this._lastTap>0){
+          this._zoom.scale>1 ? this._resetZoom() : (this._zoom.scale=2.5, this._applyZoom());
+          this._lastTap=0;
+        } else { this._lastTap=now; }
+      }
+    };
+    this._h.tmove = (e)=>{
+      if(e.touches.length!==2) return;
+      e.preventDefault();
+      const dist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      const mid={x:(e.touches[0].clientX+e.touches[1].clientX)/2,y:(e.touches[0].clientY+e.touches[1].clientY)/2};
+      this._zoom.scale=Math.min(6,Math.max(1,this._zoom.scale*(dist/lastDist)));
+      this._zoom.tx+=mid.x-lastMid.x;
+      this._zoom.ty+=mid.y-lastMid.y;
+      lastDist=dist; lastMid=mid;
+      this._applyZoom();
+    };
+    this._h.tend = (e)=>{ if(e.touches.length<2) lastDist=0; if(this._zoom.scale<1.05) this._resetZoom(); };
+    stage.addEventListener('touchstart',this._h.tstart,{passive:true});
+    stage.addEventListener('touchmove',this._h.tmove,{passive:false});
+    stage.addEventListener('touchend',this._h.tend);
     this._bound = true;
   },
   _unbind(){
     if(!this._bound || !this.canvas) return;
     const c = this.canvas, h = this._h;
+    const stage = $('.anno-stage');
     c.removeEventListener('pointerdown', h.down);
     c.removeEventListener('pointermove', h.move);
     c.removeEventListener('pointerup', h.up);
     c.removeEventListener('pointercancel', h.up);
     c.removeEventListener('pointerleave', h.up);
+    stage.removeEventListener('touchstart',h.tstart);
+    stage.removeEventListener('touchmove',h.tmove);
+    stage.removeEventListener('touchend',h.tend);
     this._bound = false;
   },
 };
@@ -1926,6 +1991,7 @@ function wire(){
   $('#annoSave').onclick   = ()=>Annotator.save();
   $('#annoUndo').onclick   = ()=>Annotator.undo();
   $('#annoClear').onclick  = ()=>Annotator.clear();
+  $('#annoZoomReset').onclick = ()=>Annotator._resetZoom();
   $$('.anno-color').forEach(b=>b.onclick=()=>Annotator.setColor(b.dataset.color));
   $$('.anno-width').forEach(b=>b.onclick=()=>Annotator.setWidth(parseInt(b.dataset.width)));
 
