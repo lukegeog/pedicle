@@ -799,20 +799,48 @@ function setupGridDrag(grid){
     dragIdx=-1; overIdx=-1; origTile=null; origRect=null;
   }
 
-  grid.querySelectorAll('.drag-handle').forEach(handle=>{
+  grid.querySelectorAll('.drag-handle').forEach((handle,_hi)=>{
+    // Tap on handle = open viewer; drag (>8px movement) = reorder
     handle.addEventListener('touchstart',(e)=>{
-      e.preventDefault(); e.stopPropagation();
       const tile=handle.closest('.photo-tile');
-      dragIdx=parseInt(tile.dataset.idx);
-      origTile=tile;
-      origRect=tile.getBoundingClientRect();
       const t=e.touches[0];
       startX=t.clientX; startY=t.clientY;
-      ghost=tile.cloneNode(true);
-      ghost.style.cssText=`position:fixed;left:${origRect.left}px;top:${origRect.top}px;width:${origRect.width}px;height:${origRect.height}px;opacity:.8;pointer-events:none;z-index:999;border-radius:10px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.4);transition:none`;
-      document.body.appendChild(ghost);
-      tile.style.opacity='.2';
-    },{passive:false});
+      let pendingDragIdx=parseInt(tile.dataset.idx);
+      let activated=false;
+
+      function activateDrag(){
+        if(activated) return; activated=true;
+        dragIdx=pendingDragIdx;
+        origTile=tile;
+        origRect=tile.getBoundingClientRect();
+        ghost=tile.cloneNode(true);
+        ghost.style.cssText=`position:fixed;left:${origRect.left}px;top:${origRect.top}px;width:${origRect.width}px;height:${origRect.height}px;opacity:.8;pointer-events:none;z-index:999;border-radius:10px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.4);transition:none`;
+        document.body.appendChild(ghost);
+        tile.style.opacity='.2';
+      }
+
+      function earlyMove(ev){
+        if(Math.hypot(ev.touches[0].clientX-startX, ev.touches[0].clientY-startY)>8){
+          activateDrag();
+          handle.removeEventListener('touchmove',earlyMove);
+        }
+      }
+      handle.addEventListener('touchmove',earlyMove,{passive:true});
+
+      // If no drag after 400ms hold, activate anyway
+      const holdTimer=setTimeout(()=>{ activateDrag(); handle.removeEventListener('touchmove',earlyMove); },400);
+
+      handle.addEventListener('touchend',()=>{
+        clearTimeout(holdTimer);
+        handle.removeEventListener('touchmove',earlyMove);
+        if(!activated){
+          // Quick tap — open the viewer for this photo
+          tile.querySelector('img')?.click();
+        }
+      },{once:true});
+
+      handle.addEventListener('touchcancel',()=>{ clearTimeout(holdTimer); handle.removeEventListener('touchmove',earlyMove); },{once:true});
+    },{passive:true});
 
     handle.addEventListener('touchmove',(e)=>{
       if(dragIdx<0||!ghost) return;
@@ -888,7 +916,7 @@ async function openDetail(id){
   $('#detailTitle').textContent=c.patientId||'Case';
   const cat=catById[c.category]||{label:c.category,cls:''};
   const photosHtml = (c.photos||[]).length
-    ? `<div class="detail-section"><h3>Photos</h3><div class="photo-grid">${c.photos.map((b,idx)=>`<div class="photo-tile"><img src="${urlFor(b)}" data-url="${urlFor(b)}" data-idx="${idx}" alt=""/></div>`).join('')}</div></div>`
+    ? `<div class="detail-section"><h3>Photos</h3><div class="photo-grid" id="detailPhotoGrid"></div></div>`
     : '';
   const dateLabel = c.dateOfSurgery
     ? formatGB(c.dateOfSurgery)
@@ -927,23 +955,29 @@ async function openDetail(id){
     toast('Deleted');
   });
   $('#dIscp').onclick=()=>openIscp(c);
-  $$('#detailBody img').forEach(img=>{
-    const idx = parseInt(img.dataset.idx);
-    img.onclick = ()=>showViewer({
-      url: img.dataset.url || img.src,
-      onAnnotate: isNaN(idx) ? null : async ()=>{
-        const newBlob = await annotatePhoto(c.photos[idx]);
-        if(newBlob){
-          c.photos[idx] = newBlob;
-          c.updatedAt = Date.now();
-          await CaseStore.put(c);
-          state.cases = await CaseStore.getAll();
-          openDetail(c.id);
-          toast('Annotated');
-        }
-      },
+  if(c.photos?.length){
+    const grid=$('#detailPhotoGrid');
+    (c.photos||[]).forEach((b,idx)=>{
+      const tile=document.createElement('div'); tile.className='photo-tile';
+      const img=document.createElement('img'); img.src=urlFor(b); img.alt='';
+      tile.appendChild(img);
+      img.onclick=()=>showViewer({
+        url: urlFor(b),
+        onAnnotate: async ()=>{
+          const newBlob=await annotatePhoto(b);
+          if(newBlob){
+            c.photos[idx]=newBlob;
+            c.updatedAt=Date.now();
+            await CaseStore.put(c);
+            state.cases=await CaseStore.getAll();
+            openDetail(c.id);
+            toast('Annotated');
+          }
+        },
+      });
+      grid.appendChild(tile);
     });
-  });
+  }
   openSheet('detailSheet','detailBack');
 }
 
