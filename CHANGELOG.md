@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Logbook list fixes, 2026-08-07
+
+- **New "Clear list" button** in the Theatre Logbook toolbar (red, confirms first). Deletes every logbook case on this device — fixes newly-uploaded lists stacking on top of whatever was extracted before instead of replacing it.
+- **Fix: display order didn't match the uploaded photo.** `coerceLogbookCases()` now assigns each row a strictly-increasing `createdAt` (previously all rows from one extraction could share the same millisecond, so the fallback tie-breaker — a random id suffix — silently reordered them); `logbookCases()` now explicitly sorts by `createdAt` rather than trusting IndexedDB's default key order.
+- `confirmDialog()` gained an explicit `destructive` option so a custom button label (like "Clear list") can still get the red styling instead of only matching on the literal word "Delete".
+
+## Unreleased — Logbook extraction fix, 2026-08-07
+
+- **Fix: misread MRNs/V-numbers.** Claude vision was occasionally reading a mangled digit as a stray letter (e.g. "VT2117319" instead of "V2117319"). The extraction prompt now spells out the exact format (V + exactly 7 digits, no second letter) and calls out this specific failure mode; `normalizePatientId()` also strips any junk between the V and the digit run as a safety net. A patient ID that still doesn't match `V` + 7 digits after cleanup now surfaces as a review warning instead of silently passing through.
+- **Fix: row order / age accuracy on rotated photos.** The prompt now explicitly tells Claude to mentally un-rotate a sideways-photographed list before reading top-to-bottom, and to read the age cell independently rather than inferring it from nearby digits (e.g. the MRN).
+
+## Unreleased — Phase 6 (Mobile polish + offline queueing), 2026-07-17
+
+- **Full offline app shell.** New `sw.js` service worker precaches the app shell (registered from `index.html`); the site now loads with zero signal, not just zero-signal case data (that already worked via IndexedDB). Network-first for the page itself so you get the latest code the moment you have signal, cache-first for static assets. Bump `SW_VERSION` in `sw.js` whenever `index.html` changes, or clients keep the old cached shell.
+- **Maskable icon** added to the inline manifest (kept as a `data:` URI to match the existing single-file design — a service worker is the one thing that can't be inlined, since browsers won't run one from a `data:` URL).
+- **Background auto-sync.** Cloud sync now retries automatically when connectivity returns and on a 5-minute timer while online + signed in, on top of the existing manual "Sync now" button. The Cloud Sync status line in Settings now distinguishes "offline, will resync automatically" from "not connected."
+- **Tap targets**: `.icon-btn` (sheet back/cancel buttons) and `.sheet-save` bumped to a 44px minimum.
+
 ## 0.4.0 — 2026-05-07
 
 - **Photo annotation**: open any photo in the fullscreen viewer and tap the new pencil icon to mark it up. Canvas-based pen with five colours (red/blue/green/yellow/white), three stroke widths, undo, clear, save, and cancel. Apple Pencil and finger both work via pointer events. Save flattens the drawing into the photo and replaces it in the case. Available from both the New/Edit sheet (annotate before saving) and the case detail view (annotate already-saved photos). Cancelling discards the strokes.
