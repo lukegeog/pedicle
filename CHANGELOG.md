@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — Fix Submit panel showing the wrong instructions, 2026-08-12
+
+- **Fix: the Submit-to-eLogbook panel always showed the "Download JSON first" instructions**, even with Cloud sync connected. The panel branches on being signed in, but it renders during boot *before* the Supabase session has been restored, and nothing re-rendered it afterwards — so the no-sync fallback stuck permanently. It now re-renders when auth state settles, and correctly shows the simpler `python elogbook_submit.py` (no file needed) once signed in.
+
 ## Unreleased — Fix skin cancer excisions coded as "wide excision", 2026-08-12
 
 - **Fix: `WLE BCC + local flap` rows were being coded as "wide local excision".** In eLogbook that term only exists under *Non-skin soft tissue tumours* — i.e. sarcoma — so a BCC/SCC/melanoma coded that way is filed under the wrong specialty. eLogbook wants a single combined term naming both lesion and reconstruction: `Excision of BCC & local Flap`, `Excision of SCC & FTSG`, and so on. The extraction prompt now spells out that matrix (8 lesion types × 8 reconstruction types), states that "WLE" is a margin rather than a code, and that the anatomical site belongs in the operation note rather than the term.

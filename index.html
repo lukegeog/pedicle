@@ -3099,6 +3099,11 @@ async function refreshSyncStatus(){
   $('#syncNow').disabled = !signedIn || offline;
   $('#sCloudSyncSub').textContent = offline ? 'Offline — will resync automatically'
     : signedIn ? `Signed in as ${SYNC.user.email}` : 'Not connected — cases stay on this device';
+  // The Submit-to-eLogbook panel branches on SYNC.user, but it renders during
+  // boot *before* the Supabase session has been restored — so it used to show
+  // the "download a JSON file first" instructions permanently even with cloud
+  // sync connected. Re-render it whenever auth state settles.
+  if(logbookCases().length) renderLogbookConfirmPanel();
 }
 
 async function saveSyncConnection(){
@@ -3559,7 +3564,11 @@ function registerServiceWorker(){
   await loadIscpScratch();
   const hasPin = !!(await Meta.get('pin'));
   startLock({mode: hasPin ? 'unlock' : 'set'});
-  initSupabase().catch(()=>{}); // best-effort, never blocks boot
+  // Best-effort, never blocks boot — but do refresh the UI once the session
+  // is restored, so anything that branches on being signed in (the
+  // Submit-to-eLogbook panel especially) reflects reality rather than the
+  // not-yet-authenticated state it first rendered in.
+  initSupabase().then(()=>refreshSyncStatus()).catch(()=>{});
 })();
 </script>
 </body>
