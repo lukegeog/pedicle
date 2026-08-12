@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Fix "could not load the operation list", 2026-08-12
+
+- **Fix: the eLogbook operation tree is now inlined in `index.html`** instead of fetched from `elogbook-tree.json` at runtime. That fetch was the single point of failure behind "Could not load the operation list", and it had been failing *silently* in the search box too (that call site swallowed the error, so the search just returned nothing). Everything else the app needs — manifest, icons — was already inlined as a data URI for exactly this reason; the tree was the lone exception. Now works offline and on first load before the service worker has cached anything. `elogbook-tree.json` stays in the repo as the editable source of truth.
+- **Fix: one failed load no longer poisons every retry.** `loadElogbookTree()` memoised the *in-flight promise*, so a single failure cached a rejected promise and the picker stayed broken for the rest of the page session even once connectivity came back.
+- Bumped `SW_VERSION` to `v2` so cached shells pick up the change.
+
 ## Unreleased — Browse operations by category, 2026-08-12
 
 - **New "Or browse the full eLogbook list" button** under the operation search box. Opens a drill-down browser over the same 1,927-operation tree, using eLogbook's own hierarchy (14 top-level areas → subcategory → operation) — for when you know roughly where a procedure sits but not what it's called. Breadcrumbs at the top let you jump back up any level; each category shows how many operations sit beneath it. Where a subcategory has both its own operations and further subcategories (e.g. Upper Limb → Bone & joints), both are shown under separate headings, matching eLogbook. If the extractor already guessed a category for the row, the browser opens straight to that area.

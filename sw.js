@@ -2,7 +2,7 @@
    Bump SW_VERSION any time index.html (or any precached file) changes,
    so clients pick up the new version instead of serving a stale shell
    forever. This is the one manual step this strategy requires. */
-const SW_VERSION = 'v1';
+const SW_VERSION = 'v2';
 const CACHE_NAME = `pedicle-${SW_VERSION}`;
 
 // The manifest and its icons are inlined as data: URIs inside index.html
