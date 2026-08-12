@@ -2986,12 +2986,16 @@ function renderLogbookConfirmPanel(){
       <p style="margin:0 0 10px">${nSubmitted} of ${cases.length} already marked submitted. The actual submission still runs as a local script on your laptop — it drives a real browser so you can log in and check each case (this can't run from a phone or a hosted web page).</p>
       ${SYNC.user ? `
       <p style="margin:0 0 8px">Cloud sync is connected, so these cases are already reaching Supabase — on your laptop, in the <code>theatre-logbook-app</code> folder:</p>
-      <pre>python elogbook_submit.py</pre>
-      <p style="margin:8px 0 0">It pulls pending cases straight from Supabase and stamps each one submitted when you save it — no file to download. (If a case was just edited, tap <strong>Sync now</strong> in Settings first so the laptop sees it.)</p>
+      <pre>cd ~/"Documents/Claude/Projects/Clinical work/theatre-logbook-app"
+source .venv/bin/activate
+python3 elogbook_submit.py --auto-exact</pre>
+      <p style="margin:8px 0 0">It pulls pending cases straight from Supabase and stamps each one submitted when you save it — no file to download. <code>--auto-exact</code> saves cases whose operation matched eLogbook exactly and only pauses on the doubtful ones. (If a case was just edited, tap <strong>Sync now</strong> in Settings first so the laptop sees it. Don't mix this with a part-finished Download-JSON run — Supabase won't know what that run already submitted, so you'd get duplicates.)</p>
       ` : `
       <p style="margin:0 0 8px">1. Tap <strong>Download JSON</strong> above.<br/>2. On your laptop, in the <code>theatre-logbook-app</code> folder:</p>
-      <pre>python elogbook_submit.py ~/Downloads/logbook.json</pre>
-      <p style="margin:8px 0 0">Chromium opens, you log in once, then each case is pre-filled for you to check and save. Connecting Cloud sync in Settings removes this download step.</p>
+      <pre>cd ~/"Documents/Claude/Projects/Clinical work/theatre-logbook-app"
+source .venv/bin/activate
+python3 elogbook_submit.py ~/Downloads/logbook.json --auto-exact</pre>
+      <p style="margin:8px 0 0">Chromium opens, you log in once, then each case is pre-filled. <code>--auto-exact</code> saves the ones whose operation matched eLogbook exactly and pauses only on the doubtful ones; add <code>--start 6</code> to resume part-way. Connecting Cloud sync in Settings removes this download step.</p>
       `}
     </div>`;
   $('#lbExportCsv').onclick = ()=>exportLogbookCsv(cases);
