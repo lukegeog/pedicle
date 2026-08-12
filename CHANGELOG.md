@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Browse operations by category, 2026-08-12
+
+- **New "Or browse the full eLogbook list" button** under the operation search box. Opens a drill-down browser over the same 1,927-operation tree, using eLogbook's own hierarchy (14 top-level areas → subcategory → operation) — for when you know roughly where a procedure sits but not what it's called. Breadcrumbs at the top let you jump back up any level; each category shows how many operations sit beneath it. Where a subcategory has both its own operations and further subcategories (e.g. Upper Limb → Bone & joints), both are shown under separate headings, matching eLogbook. If the extractor already guessed a category for the row, the browser opens straight to that area.
+- Typed search and the browser now share one select handler, so a term picked either way is stored, categorised and SAC-indicative-flagged identically.
+
 ## Unreleased — Logbook list fixes, 2026-08-07
 
 - **New "Clear list" button** in the Theatre Logbook toolbar (red, confirms first). Deletes every logbook case on this device — fixes newly-uploaded lists stacking on top of whatever was extracted before instead of replacing it.

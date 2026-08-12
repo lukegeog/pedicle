@@ -312,6 +312,22 @@
   .lb-proc-head .idx{font-weight:600;font-size:13px}
   .lb-star{color:#d97706;font-size:12px;font-weight:600;margin-top:4px}
   .lb-search-wrap{position:relative}
+  .lb-browse-btn{width:100%;margin-top:8px;padding:11px;border-radius:10px;background:var(--surface);border:1px solid var(--border);font-weight:600;font-size:13px;color:var(--text);display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px}
+  .lb-browse-btn svg{width:16px;height:16px;flex:0 0 auto;color:var(--text-muted)}
+  /* Drill-down operation browser (mirrors eLogbook's own category tree) */
+  .opb-crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted);background:var(--surface-2);position:sticky;top:0;z-index:2}
+  .opb-crumb{color:var(--accent);font-weight:600;cursor:pointer}
+  .opb-crumb.current{color:var(--text-muted);font-weight:500;cursor:default}
+  .opb-sep{opacity:.5}
+  .opb-list{padding:8px 0}
+  .opb-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:14px 16px;border-bottom:1px solid var(--border);text-align:left;background:transparent;color:var(--text);font-size:14.5px;min-height:52px}
+  .opb-row:active{background:var(--surface-2)}
+  .opb-row .lbl{flex:1;line-height:1.35}
+  .opb-row .cnt{font-size:11.5px;color:var(--text-muted);flex:0 0 auto}
+  .opb-row svg{width:18px;height:18px;flex:0 0 auto;color:var(--text-muted)}
+  .opb-row.leaf{font-weight:500}
+  .opb-row.leaf .tick{color:var(--accent);font-weight:700}
+  .opb-section{padding:14px 16px 6px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
   .lb-suggestions{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-top:6px;overflow:hidden}
   .lb-suggestion{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer}
   .lb-suggestion:last-child{border-bottom:none}
@@ -719,6 +735,21 @@
       <button id="annoUndo" aria-label="Undo last stroke">↶</button>
       <button id="annoClear" aria-label="Clear all">✕</button>
     </div>
+  </div>
+</div>
+
+<!-- ======= OPERATION BROWSER SHEET (eLogbook category tree) ======= -->
+<div class="sheet-back" id="opBrowseBack"></div>
+<div class="sheet" id="opBrowseSheet" aria-hidden="true">
+  <div class="sheet-head">
+    <button class="icon-btn" id="opBrowseClose" aria-label="Cancel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <h2>Choose operation</h2>
+  </div>
+  <div class="opb-crumbs" id="opBrowseCrumbs"></div>
+  <div class="sheet-body" style="padding:0">
+    <div class="opb-list" id="opBrowseList"></div>
   </div>
 </div>
 
@@ -2295,6 +2326,103 @@ function shortPath(path){
   return `${path[0]} → … → ${path[path.length-1]}`;
 }
 
+/* -------- Drill-down operation browser --------
+   Walks the same elogbook-tree.json the search box scores against, but
+   presented as eLogbook's own category hierarchy (14 top-level areas →
+   subcategory → operation) for when you know roughly where a procedure
+   lives but not what it's called. Some nodes carry BOTH child categories
+   and their own operations (e.g. Upper Limb → Bone & joints), so a level
+   can show two sections at once.
+   `opBrowse.path` is the node names walked so far; `onPick` receives the
+   full leaf path, matching what searchElogbookTerms returns, so the two
+   entry points converge on identical downstream handling. */
+const opBrowse = { path:[], onPick:null };
+function opBrowseNodesAt(path){
+  let nodes = ELOGBOOK_TREE || [];
+  let node = null;
+  for(const name of path){
+    node = (nodes||[]).find(n=>n.name===name);
+    if(!node) return { children:[], leaves:[] };
+    nodes = node.children || [];
+  }
+  return node ? { children:node.children||[], leaves:node.leaves||[] }
+              : { children:ELOGBOOK_TREE||[], leaves:[] };
+}
+function countLeavesDeep(node){
+  let t = (node.leaves||[]).length;
+  for(const c of (node.children||[])) t += countLeavesDeep(c);
+  return t;
+}
+function renderOpBrowse(){
+  const crumbs = $('#opBrowseCrumbs'), list = $('#opBrowseList');
+  const chevron = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+  crumbs.innerHTML = '';
+  const addCrumb = (label, idx)=>{
+    const isCurrent = idx===opBrowse.path.length;
+    const c = document.createElement('span');
+    c.className = 'opb-crumb'+(isCurrent?' current':'');
+    c.textContent = label;
+    if(!isCurrent) c.onclick = ()=>{ opBrowse.path = opBrowse.path.slice(0, idx); renderOpBrowse(); };
+    crumbs.appendChild(c);
+    if(!isCurrent){ const s=document.createElement('span'); s.className='opb-sep'; s.textContent='›'; crumbs.appendChild(s); }
+  };
+  addCrumb('All areas', 0);
+  opBrowse.path.forEach((name,i)=>addCrumb(name, i+1));
+
+  const { children, leaves } = opBrowseNodesAt(opBrowse.path);
+  list.innerHTML = '';
+
+  if(children.length){
+    if(leaves.length){ const h=document.createElement('div'); h.className='opb-section'; h.textContent='Subcategories'; list.appendChild(h); }
+    children.forEach(child=>{
+      const n = countLeavesDeep(child);
+      const b = document.createElement('button');
+      b.type='button'; b.className='opb-row';
+      b.innerHTML = `<span class="lbl">${escapeHtml(child.name)}</span><span class="cnt">${n}</span>${chevron}`;
+      b.onclick = ()=>{ opBrowse.path = [...opBrowse.path, child.name]; renderOpBrowse(); list.scrollTop=0; };
+      list.appendChild(b);
+    });
+  }
+
+  if(leaves.length){
+    if(children.length){ const h=document.createElement('div'); h.className='opb-section'; h.textContent='Operations here'; list.appendChild(h); }
+    leaves.forEach(leaf=>{
+      const b = document.createElement('button');
+      b.type='button'; b.className='opb-row leaf';
+      b.innerHTML = `<span class="lbl">${escapeHtml(leaf)}</span><span class="tick">Select</span>`;
+      b.onclick = ()=>{
+        const fullPath = [...opBrowse.path, leaf];
+        closeSheet('opBrowseSheet','opBrowseBack');
+        if(opBrowse.onPick) opBrowse.onPick(fullPath);
+      };
+      list.appendChild(b);
+    });
+  }
+
+  if(!children.length && !leaves.length){
+    const e=document.createElement('div'); e.className='opb-section'; e.textContent='Nothing here';
+    list.appendChild(e);
+  }
+}
+async function openOpBrowser(onPick, startPath){
+  opBrowse.onPick = onPick;
+  opBrowse.path = [];
+  $('#opBrowseList').innerHTML = '<div class="opb-section">Loading operation list…</div>';
+  $('#opBrowseCrumbs').innerHTML = '';
+  openSheet('opBrowseSheet','opBrowseBack');
+  try{
+    await loadElogbookTree();
+  }catch(e){
+    $('#opBrowseList').innerHTML = '<div class="opb-section">Could not load the operation list — check your connection and try again.</div>';
+    return;
+  }
+  // Jump straight to the relevant area when the extractor already guessed a
+  // category, so you're not always starting from the top of all 14.
+  if(startPath && (ELOGBOOK_TREE||[]).some(n=>n.name===startPath)) opBrowse.path = [startPath];
+  renderOpBrowse();
+}
+
 /* -------- Photo -> Claude vision extraction (ported from app.py) -------- */
 async function compressForExtraction(file, maxBytes=3500000, maxEdge=3000){
   const url = URL.createObjectURL(file);
@@ -2658,7 +2786,8 @@ function renderLogbookProc(wrap, proc, idx, total){
 function renderOperationPicker(el, proc){
   el.innerHTML = proc.elogbookTerm
     ? `<div class="lb-selected-term"><div><div class="txt">${escapeHtml(proc.elogbookTerm)}</div><div class="path" id="lbTermPath"></div></div><button type="button" class="lb-change-term">Change</button></div>`
-    : `<div class="lb-search-wrap"><input type="text" class="lb-op-search" placeholder="Search eLogbook operation, e.g. carpal tunnel, free DIEP..."/><div class="lb-suggestions" style="display:none"></div></div>`;
+    : `<div class="lb-search-wrap"><input type="text" class="lb-op-search" placeholder="Search eLogbook operation, e.g. carpal tunnel, free DIEP..."/><div class="lb-suggestions" style="display:none"></div></div>
+       <button type="button" class="lb-browse-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Or browse the full eLogbook list</button>`;
   if(proc.elogbookTerm){
     loadElogbookTree().then(()=>{
       const found = ELOGBOOK_LEAF_INDEX.find(e=>e.path[e.path.length-1]===proc.elogbookTerm);
@@ -2670,6 +2799,18 @@ function renderOperationPicker(el, proc){
   }
   const input = el.querySelector('.lb-op-search');
   const suggBox = el.querySelector('.lb-suggestions');
+  // Shared by both entry points (typed search + drill-down browser) so a
+  // term picked either way is stored, categorised and SAC-flagged identically.
+  const selectPath = async (path)=>{
+    proc.elogbookTerm = path[path.length-1];
+    proc.category = path[0] || proc.category;
+    const groups = findIndicativeGroups(proc.elogbookTerm, proc.procedureRaw);
+    proc.indicative = groups.length>0; proc.sacGroups = groups.join(', ');
+    await persistLogbookCase(proc);
+    renderOperationPicker(el, proc);
+    renderLogbookCards(); renderLogbookConfirmPanel();
+  };
+  el.querySelector('.lb-browse-btn').onclick = ()=>openOpBrowser(selectPath, proc.category);
   let debounceTimer=null;
   input.addEventListener('input', ()=>{
     clearTimeout(debounceTimer);
@@ -2683,15 +2824,7 @@ function renderOperationPicker(el, proc){
       results.forEach(path=>{
         const s=document.createElement('div'); s.className='lb-suggestion';
         s.innerHTML = `<div class="term">${escapeHtml(path[path.length-1])}</div>${path.length>1?`<div class="path">${escapeHtml(shortPath(path.slice(0,-1)))}</div>`:''}`;
-        s.onclick = async ()=>{
-          proc.elogbookTerm = path[path.length-1];
-          proc.category = path[0] || proc.category;
-          const groups = findIndicativeGroups(proc.elogbookTerm, proc.procedureRaw);
-          proc.indicative = groups.length>0; proc.sacGroups = groups.join(', ');
-          await persistLogbookCase(proc);
-          renderOperationPicker(el, proc);
-          renderLogbookCards(); renderLogbookConfirmPanel();
-        };
+        s.onclick = ()=>selectPath(path);
         suggBox.appendChild(s);
       });
     }, 200);
@@ -3260,6 +3393,8 @@ function wire(){
   $('#lbShowPhoto').onclick = ()=>{
     if(lbState.sourceImage) showViewer({url: urlFor(lbState.sourceImage)});
   };
+  $('#opBrowseClose').onclick = ()=>closeSheet('opBrowseSheet','opBrowseBack');
+  $('#opBrowseBack').onclick = ()=>closeSheet('opBrowseSheet','opBrowseBack');
   $('#lbClearAll').onclick = ()=>{
     const cases = logbookCases();
     if(!cases.length) return;
