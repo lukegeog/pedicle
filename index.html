@@ -2233,7 +2233,12 @@ const LB_SHORTHAND = {
   // ('nbr' hit "Sentinel node biopsy H&N"). Each expansion is worded to
   // include the words that actually appear in the target leaf's path.
   'nbr':'repair nailbed fingertip upper limb','fswo':'washout flexor tenosynovitis upper limb',
-  'edc':'extensor digitorum communis tendon','mua':'manipulation',
+  // EDC = extensor digitorum communis. Expanded to the zone V repair rather
+  // than the anatomical name, which on its own ranked "Extensor digitorum
+  // brevis flap" first. Written as arabic 5 because that's how the tree spells
+  // zones ("...zones 1-5"); the numeral is dropped by the token-length filter
+  // in lbScore either way, so it's the extensor/tendon/repair words doing the work.
+  'edc':'extensor tendon repair zone 5','mua':'manipulation',
   'ctd':'carpal tunnel decompression','wd':'debridement of wound',
   'ctr':'carpal tunnel decompression',
   'llf':'left long finger upper limb','rlf':'right long finger upper limb','lif':'left index finger upper limb','rif':'right index finger upper limb',

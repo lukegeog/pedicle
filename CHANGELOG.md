@@ -3,7 +3,7 @@
 ## Unreleased — Fix operation search matching nonsense, 2026-08-12
 
 - **Fix: single-character tokens in the operation tree scored ~0.87 against almost any query.** `lbScore()` filtered query tokens to 2+ characters but never applied the same filter to the tree side, so incidental one-character tokens — `n`/`h` from "H&N", `s` from "tendon(s)", `1`/`2` from zone numbers — matched via the substring branch and dragged irrelevant leaves to the top. This is the root cause of `NBR` returning "Sentinel node biopsy H&N" (`nbr` contains `n`), and of the extensor abbreviations returning *flexor* repairs (`extensor` contains `s`). The tree side now uses the same length filter, and substring matching requires 3+ characters (2-character tokens must match exactly).
-- **Added missing abbreviations** that appear in the extractor's own prompt but not the search shorthand map: `NBR`, `FSWO`, `EDC`, `MUA`, `CTD`, `WD`. `NBR` now correctly resolves to "Repair nailbed".
+- **Added missing abbreviations** that appear in the extractor's own prompt but not the search shorthand map: `NBR`, `FSWO`, `EDC`, `MUA`, `CTD`, `WD`. `NBR` now correctly resolves to "Repair nailbed"; `EDC` maps to the zone V extensor tendon repair rather than the anatomical name, which on its own ranked "Extensor digitorum brevis flap" first.
 
 ## Unreleased — Fix "could not load the operation list", 2026-08-12
 
