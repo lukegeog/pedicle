@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Fix skin cancer excisions coded as "wide excision", 2026-08-12
+
+- **Fix: `WLE BCC + local flap` rows were being coded as "wide local excision".** In eLogbook that term only exists under *Non-skin soft tissue tumours* — i.e. sarcoma — so a BCC/SCC/melanoma coded that way is filed under the wrong specialty. eLogbook wants a single combined term naming both lesion and reconstruction: `Excision of BCC & local Flap`, `Excision of SCC & FTSG`, and so on. The extraction prompt now spells out that matrix (8 lesion types × 8 reconstruction types), states that "WLE" is a margin rather than a code, and that the anatomical site belongs in the operation note rather than the term.
+- **The prompt's example terms were fabricated**, not real eLogbook entries (`'Nail bed repair — primary'` vs the real `'Repair nailbed'`), which taught the extractor to invent plausible-sounding labels. Replaced with 13 verbatim entries from the tree, plus an explicit instruction to copy real entries rather than invent.
+- **New fallback:** any extracted term that isn't an exact tree entry is now resolved to the nearest real one via the same scorer the search box uses, fed both the invented term and the raw list text. `Wide local excision` + `WLE SCC + FTSG (upper lid)` → `Excision of SCC & FTSG`. The original model output is kept in `modelTerm` for the learning loop.
+- **New review warning** when a term isn't a real eLogbook operation — those can't be picked from eLogbook's typeahead at submission time, so it's better to catch them during review.
+
 ## Unreleased — Fix operation search matching nonsense, 2026-08-12
 
 - **Fix: single-character tokens in the operation tree scored ~0.87 against almost any query.** `lbScore()` filtered query tokens to 2+ characters but never applied the same filter to the tree side, so incidental one-character tokens — `n`/`h` from "H&N", `s` from "tendon(s)", `1`/`2` from zone numbers — matched via the substring branch and dragged irrelevant leaves to the top. This is the root cause of `NBR` returning "Sentinel node biopsy H&N" (`nbr` contains `n`), and of the extensor abbreviations returning *flexor* repairs (`extensor` contains `s`). The tree side now uses the same length filter, and substring matching requires 3+ characters (2-character tokens must match exactly).

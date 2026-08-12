@@ -2536,16 +2536,52 @@ Output each procedure as an object with these exact keys:
 
 Default date if none on list: ${defaultDateIso}.
 
-Examples of good elogbook_term values:
-  'Free DIEP flap breast reconstruction'
-  'Nail bed repair — primary'
-  'Carpal tunnel decompression — open'
-  'Digital nerve repair — primary'
-  'Flexor tendon repair — primary zone 2'
-  'Wound debridement and closure — hand'
-  'Skin graft — SSG'
+SKIN LESION EXCISIONS — the most commonly mis-coded rows, read this carefully:
+eLogbook codes a skin lesion excision as ONE combined term naming both the lesion and
+the reconstruction, in the form "Excision of <lesion> & <reconstruction>". There is NO
+standalone "wide local excision" code for skin cancer — "Wide local excision" exists only
+under Non-skin soft tissue tumours (i.e. sarcoma), so using it for a BCC/SCC/melanoma files
+the case under the wrong specialty entirely. Never output a bare 'wide local excision',
+'wide excision' or 'excision' for a skin lesion.
+  • <lesion> is one of: BCC, SCC, MM (melanoma), benign lesion, scar,
+    other skin malignancy, recurrent disease, in transit disease.
+  • <reconstruction> is one of: direct closure, SSG, FTSG, local Flap, pedicled flap,
+    perforator flap, distant pedicled flap, free flap reconstruction.
+  • 'WLE' on a theatre list only means the excision was taken with a margin. It does not
+    change which code applies, and it is not part of the term. So:
+        'WLE BCC + local flap (cheek)'   -> 'Excision of BCC & local Flap'
+        'WLE SCC + FTSG (upper lid)'     -> 'Excision of SCC & FTSG'
+        'WLE MM scar'                    -> 'Excision of scar & direct closure'
+        'WLE BCC + FTSG. Upper blepharoplasty' -> two objects: 'Excision of BCC & FTSG'
+                                                  and 'Upper lid blepharoplasty'
+  • The anatomical site (cheek, nose, ear, forehead...) belongs in operation_note and
+    procedure_raw, NOT in elogbook_term — there is no site-specific excision code.
+  • If the row states no reconstruction at all, use '& direct closure'. Two 'leave open'
+    codes also exist: 'Curette or excise BCC and leave open' and
+    'Excision of SCC and leave open'.
+  • A shave or curette biopsy is NOT an excision — use 'Simple excision biopsy' or the
+    relevant biopsy code instead.
+
+elogbook_term MUST be a real eLogbook entry, copied exactly. Do not invent a
+plausible-sounding label or add your own qualifiers with dashes. Real examples, verbatim:
+  'Excision of BCC & local Flap'
+  'Excision of SCC & FTSG'
+  'Free flaps - Free DIEP flap'
+  'Repair nailbed'
+  'Simple decompression - Carpal tunnel decompression'
+  'Digital nerve neurosynthesis'
+  'Flexor - Zone 1/2 - Primary repair single digit flexor tendon(s) zones 1-2'
+  'Extensor - Zones 1-5 - Primary repair single extensor tendon zones 1-5'
+  'Debridement & wound closure'
+  'SSG to wound'
+  'Release trigger finger'
+  'Palm only - Selective fasciectomy palm'
+  'Washout of flexor tenosynovitis'
+If you are unsure of the exact wording, prefer the closest real entry above over inventing
+one — a term that isn't in eLogbook's list can't be submitted.
 
 Common plastic-surgery abbreviations:
+  WLE = wide local excision (a margin, not a code — see SKIN LESION EXCISIONS above)
   NBR = nail bed repair
   FSWO = flexor sheath washout
   FDP / FDS = flexor digitorum profundus / superficialis
@@ -2601,11 +2637,36 @@ function normalizePatientId(raw){
   if(anyDigits) return 'V'+anyDigits[0].slice(0,7);
   return s;
 }
-function coerceLogbookCases(rawCases, defaultDateIso){
+/* Is this exactly a real eLogbook leaf? Only exact matches count — eLogbook's
+   own submission typeahead needs the real string, and a near-miss like
+   'wide excision' silently resolves to whatever it happens to rank first. */
+function isRealElogbookTerm(term){
+  if(!term || !ELOGBOOK_LEAF_INDEX) return false;
+  const t = term.trim().toLowerCase();
+  return ELOGBOOK_LEAF_INDEX.some(e=>e.path[e.path.length-1].toLowerCase()===t);
+}
+/* Safety net for terms Claude invented rather than copied (e.g. returning a
+   bare 'wide local excision' for a 'WLE BCC + local flap' row, which is a
+   *sarcoma* code in eLogbook, not a skin-cancer one). The prompt now spells
+   the real format out, but if a term still comes back that isn't in the tree
+   we resolve it to the nearest real entry using the same scorer the search
+   box uses, feeding it the raw list text as well as the invented term so the
+   lesion and reconstruction words both contribute. Returns '' when nothing
+   scores, leaving the row flagged as missing a term for review rather than
+   guessing wildly. */
+async function resolveToRealTerm(term, raw){
+  const query = [term, raw].filter(Boolean).join(' ');
+  if(!query.trim()) return '';
+  const hits = await searchElogbookTerms(query, 1);
+  return hits.length ? hits[0][hits[0].length-1] : '';
+}
+async function coerceLogbookCases(rawCases, defaultDateIso){
+  await loadElogbookTree();
   const base = Date.now(); // strictly-increasing per row — see logbookCases()
-  return rawCases.map((c,i)=>{
-    const term = c.elogbook_term || '';
+  return Promise.all(rawCases.map(async (c,i)=>{
+    const rawTerm = c.elogbook_term || '';
     const raw = c.procedure_raw || '';
+    const term = isRealElogbookTerm(rawTerm) ? rawTerm : await resolveToRealTerm(rawTerm, raw);
     const groups = findIndicativeGroups(term, raw);
     return {
       id: uid(), source:'logbook', createdAt:base+i, updatedAt:base+i,
@@ -2621,12 +2682,12 @@ function coerceLogbookCases(rawCases, defaultDateIso){
       hospital: LOGBOOK_DEFAULT_HOSPITAL,
       procedureRaw: raw,
       operationNote: c.operation_note || raw,
-      modelTerm: term,
+      modelTerm: rawTerm, // what Claude actually said, for the learning loop
       submittedAt: null,
       indicative: groups.length>0,
       sacGroups: groups.join(', '),
     };
-  });
+  }));
 }
 async function extractTheatreList(file){
   const apiKey = await Meta.get('claudeApiKey');
@@ -2690,6 +2751,13 @@ function renderLogbookTab(){
   $('#lbShowPhoto').style.display = lbState.sourceImage ? '' : 'none';
   renderLogbookCards();
   renderLogbookConfirmPanel();
+  // The "isn't an eLogbook operation" check in validateLogbookCases needs the
+  // leaf index; build it if this is the first render and re-run the panel so
+  // the warning shows on a tab you've simply navigated to (not just after an
+  // extraction, which loads the tree itself).
+  if(cases.length && !ELOGBOOK_LEAF_INDEX){
+    loadElogbookTree().then(()=>renderLogbookConfirmPanel()).catch(()=>{});
+  }
 }
 function renderLogbookCards(){
   const wrap = $('#lbCards');
@@ -2869,6 +2937,9 @@ function validateLogbookCases(cases){
     else if(!/^V\d{7}$/.test(c.patientId)) issues.push({row, field:'patientId', message:`Patient ID "${c.patientId}" doesn't match the V+7-digit format — check it against the list`, severity:'warn'});
     if(!c.dateOfSurgery) issues.push({row, field:'date', message:'Missing operation date', severity:'error'});
     if(!c.elogbookTerm) issues.push({row, field:'elogbookTerm', message:'Missing eLogbook search term', severity:'error'});
+    // A term that isn't a real tree entry can't be picked from eLogbook's own
+    // typeahead at submission time, so surface it here rather than at 2am.
+    else if(ELOGBOOK_LEAF_INDEX && !isRealElogbookTerm(c.elogbookTerm)) issues.push({row, field:'elogbookTerm', message:`"${c.elogbookTerm}" isn't an eLogbook operation — pick one from the list`, severity:'warn'});
     if(!c.supervision) issues.push({row, field:'supervision', message:'Missing supervision level', severity:'warn'});
     if(!c.patientAge) issues.push({row, field:'patientAge', message:'Missing patient age', severity:'warn'});
     if(!c.cepod) issues.push({row, field:'cepod', message:'Missing CEPOD (Elective/Emergency)', severity:'warn'});
