@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Fix misread MRNs/ages by sending high-resolution column crops, 2026-08-12
+
+- **Fix: MRNs and ages came back as digit-scrambles of the real values** (V1189914 read as V1869991, V1065722 as V0572572), with every case collapsed onto one date. Root cause was resolution, not prompting: the vision API downsamples any image to ~1568px on its long edge, so on a 2600-4000px page photo each MRN digit reached the model only a dozen-or-so pixels wide — enough to see "a 7-digit number", not which one.
+- The extractor now sends **native-resolution crops of the Date/MRN/Age/Gender columns** alongside the whole page. Crops are cut into vertical bands with a 6% overlap so no row falls in a gap, and scaled only if a band still exceeds the API limit. Measured effect: 1.7x more linear detail on the digits for a flatbed scan, 2.1x for a full-resolution phone photo. The prompt directs the model to read identifiers from the crops and the operation text from the full page, and to de-duplicate rows appearing in the overlap.
+- **New review warning when every case shares one date** — a real theatre list spans several, so it's a cheap signal that rows weren't read individually (which is how this failure presented).
+
 ## Unreleased — Fix Submit panel showing the wrong instructions, 2026-08-12
 
 - **Fix: the Submit-to-eLogbook panel always showed the "Download JSON first" instructions**, even with Cloud sync connected. The panel branches on being signed in, but it renders during boot *before* the Supabase session has been restored, and nothing re-rendered it afterwards — so the no-sync fallback stuck permanently. It now re-renders when auth state settles, and correctly shows the simpler `python elogbook_submit.py` (no file needed) once signed in.

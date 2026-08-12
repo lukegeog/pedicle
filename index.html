@@ -2454,7 +2454,79 @@ async function openOpBrowser(onPick, startPath){
   renderOpBrowse();
 }
 
-/* -------- Photo -> Claude vision extraction (ported from app.py) -------- */
+/* -------- Photo -> Claude vision extraction (ported from app.py) --------
+
+   Why this sends several images rather than one:
+
+   The vision API downsamples anything larger than ~1568px on its long edge.
+   A full-page photo of a theatre list is typically 2500-4000px wide, so every
+   MRN digit ends up only a dozen-or-so pixels across by the time the model
+   sees it — legible enough to tell it's a 7-digit number, not enough to tell
+   *which* one. That produced digit-scrambled MRNs (V1189914 read as
+   V1869991) and ages borrowed from neighbouring rows.
+
+   Fix: alongside the whole page (needed for the handwritten operation
+   column), send tall narrow crops of just the Date/MRN/Age/Gender columns.
+   Because those crops are under the downsample threshold on both axes they
+   arrive at native resolution, so the digits are actually readable. They're
+   cut into vertical bands with a slight overlap so no row falls in a gap. */
+const IDENT_CROP_FRAC = 0.46;   // left share of the page holding the ID columns
+const IDENT_BAND_MAX  = 1500;   // keep each band under the API's ~1568px limit
+const IDENT_BAND_OVERLAP = 0.06;
+
+async function buildIdentifierCrops(file){
+  const url = URL.createObjectURL(file);
+  try{
+    const img = await new Promise((res,rej)=>{const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url});
+    const W = img.naturalWidth, H = img.naturalHeight;
+    if(!W || !H) return [];
+    // Landscape scans put the columns across the top; portrait ones down the
+    // left. Crop the leading slice of the longer axis either way.
+    const landscape = W >= H;
+    const cropW = landscape ? Math.round(W * IDENT_CROP_FRAC) : W;
+    const cropH = landscape ? H : Math.round(H * IDENT_CROP_FRAC);
+    // Bands run along whichever axis is longer within the crop.
+    const bandAxisLen = landscape ? cropH : cropW;
+    const nBands = Math.max(1, Math.ceil(bandAxisLen / IDENT_BAND_MAX));
+    if(nBands === 1 && Math.max(cropW, cropH) <= IDENT_BAND_MAX){
+      return [await cropToBlob(img, 0, 0, cropW, cropH)];
+    }
+    const step = bandAxisLen / nBands;
+    const over = Math.round(step * IDENT_BAND_OVERLAP);
+    const out = [];
+    for(let i=0; i<nBands; i++){
+      const start = Math.max(0, Math.round(i*step) - (i? over : 0));
+      const end = Math.min(bandAxisLen, Math.round((i+1)*step) + (i<nBands-1 ? over : 0));
+      const len = end - start;
+      if(len <= 0) continue;
+      out.push(landscape
+        ? await cropToBlob(img, 0, start, cropW, len)
+        : await cropToBlob(img, start, 0, len, cropH));
+    }
+    return out;
+  } catch(e){
+    console.warn('Identifier crops failed; falling back to the full page only', e);
+    return [];
+  } finally { URL.revokeObjectURL(url) }
+}
+async function cropToBlob(img, sx, sy, sw, sh){
+  // Banding caps the long axis, but on a full-resolution phone photo the crop's
+  // *other* axis can still exceed the API's limit and trigger a server-side
+  // downsample. Scale to fit here instead, so the shrink is proportional and
+  // predictable: a 1855px-wide crop becomes 1500px (0.81x) rather than the
+  // 0.39x the full 4032px page would suffer.
+  const scale = Math.min(1, IDENT_BAND_MAX / Math.max(sw, sh));
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
+  const c = document.createElement('canvas');
+  c.width = dw; c.height = dh;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+  // Quality 0.95: these crops exist purely to keep digits crisp, so this is
+  // the wrong place to save bytes.
+  return await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));
+}
 async function compressForExtraction(file, maxBytes=3500000, maxEdge=3000){
   const url = URL.createObjectURL(file);
   try{
@@ -2484,13 +2556,29 @@ async function compressForExtraction(file, maxBytes=3500000, maxEdge=3000){
     return await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.6));
   } finally { URL.revokeObjectURL(url) }
 }
-function buildExtractionPrompt(defaultDateIso, extra, expectedRows){
+function buildExtractionPrompt(defaultDateIso, extra, expectedRows, nCrops){
   const extraBlock = extra && extra.trim() ? `\n\nUser notes: ${extra}\n` : '';
   const expectedBlock = (expectedRows && expectedRows>0)
     ? `\n\nThe user reports this list has exactly ${expectedRows} patient(s). Your raw transcription and JSON output MUST contain exactly this many patient rows. If your reading produces a different count, re-examine the photo carefully — you've likely merged adjacent rows or skipped one.\n`
     : '';
+  const cropBlock = (nCrops && nCrops>0) ? `
+IMAGES YOU HAVE BEEN GIVEN — use the right one for each field:
+  • Image 1 is the WHOLE page. Use it for row structure and for the operation
+    text (usually handwritten in the right-hand column).
+  • Images 2-${nCrops+1} are HIGH-RESOLUTION CROPS of the left-hand identifier
+    columns (Date / MRN / Age / Gender) of that same page, in top-to-bottom
+    order, each covering a consecutive block of rows with a small overlap.
+  • The MRN, age, gender and date MUST be read from the high-resolution crops,
+    NOT from image 1 — image 1 is downsampled and its digits are unreliable.
+    Read each MRN digit by digit off the crop.
+  • The crops overlap slightly, so the same row may appear at the bottom of one
+    crop and the top of the next. Emit each patient row ONCE — de-duplicate by
+    MRN + date. Do not let the overlap inflate your row count.
+  • Align crops to image 1 by row order: the Nth row in the crops is the Nth
+    row of the page, and gets the Nth row's operation text.
+` : '';
   return `You are extracting surgical case data from a UK plastic-surgery theatre list photo for a registrar's eLogbook entries.
-
+${cropBlock}
 TWO-STEP OUTPUT — follow this exact structure:
 
 The photo may be rotated (e.g. a portrait table photographed sideways so its rows run left-to-right in the image). Mentally rotate it back first. "Top-to-bottom order" below always means the row order of the original printed table — the row containing the EARLIEST date/first patient on the list — regardless of how the photo happens to be oriented.
@@ -2701,16 +2789,26 @@ async function extractTheatreList(file){
   const extra = $('#lbExtraNotes').value;
   const expected = parseInt($('#lbExpectedRows').value || '0', 10) || 0;
   lbState.lastExpectedRows = expected;
-  const prompt = buildExtractionPrompt(new Date().toISOString().slice(0,10), extra, expected);
+  // Native-resolution crops of the ID columns — the whole page alone loses too
+  // much detail to read 7-digit MRNs reliably. See buildIdentifierCrops().
+  const cropBlobs = await buildIdentifierCrops(file);
+  const cropB64 = [];
+  for(const cb of cropBlobs){
+    if(!cb) continue;
+    cropB64.push((await blobToDataURL(cb)).split(',')[1]);
+  }
+  const prompt = buildExtractionPrompt(new Date().toISOString().slice(0,10), extra, expected, cropB64.length);
+  const content = [
+    {type:'image', source:{type:'base64', media_type:'image/jpeg', data:b64}},
+    ...cropB64.map(d=>({type:'image', source:{type:'base64', media_type:'image/jpeg', data:d}})),
+    {type:'text', text:prompt},
+  ];
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
     body: JSON.stringify({
       model, max_tokens:16000, temperature:0,
-      messages:[{role:'user', content:[
-        {type:'image', source:{type:'base64', media_type:'image/jpeg', data:b64}},
-        {type:'text', text:prompt}
-      ]}]
+      messages:[{role:'user', content}]
     })
   });
   if(!res.ok){ const err=await res.text(); throw new Error(`Claude API ${res.status}: ${err.slice(0,300)}`); }
@@ -2931,10 +3029,16 @@ function renderOperationPicker(el, proc){
 }
 function validateLogbookCases(cases){
   const issues=[];
+  const distinctDates = new Set(cases.map(c=>c.dateOfSurgery).filter(Boolean));
+  const sameDateForAll = distinctDates.size===1;
   cases.forEach((c,i)=>{
     const row=i+1;
     if(!c.patientId) issues.push({row, field:'patientId', message:'Missing patient ID', severity:'error'});
     else if(!/^V\d{7}$/.test(c.patientId)) issues.push({row, field:'patientId', message:`Patient ID "${c.patientId}" doesn't match the V+7-digit format — check it against the list`, severity:'warn'});
+    // Every case sharing one date is a strong hint the dates weren't actually
+    // read per-row (a real theatre list spans several dates), which in practice
+    // has come with misread MRNs too. Cheap to check, and worth a look.
+    else if(sameDateForAll && cases.length>3) issues.push({row, field:'date', message:'Every case has the same date — check the dates and MRNs against the list, they may not have been read row-by-row', severity:'warn'});
     if(!c.dateOfSurgery) issues.push({row, field:'date', message:'Missing operation date', severity:'error'});
     if(!c.elogbookTerm) issues.push({row, field:'elogbookTerm', message:'Missing eLogbook search term', severity:'error'});
     // A term that isn't a real tree entry can't be picked from eLogbook's own
