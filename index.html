@@ -2227,6 +2227,14 @@ const LB_SHORTHAND = {
   'wle':'wide local excision','scc':'scc squamous cell carcinoma','bcc':'bcc basal cell carcinoma','mm':'mm melanoma',
   'ssg':'split skin graft ssg','ftsg':'full thickness skin graft ftsg',
   'i&d':'incision and drainage','tt':'trigger thumb','tf':'trigger finger',
+  // These all appear in the extractor's own abbreviation list (see
+  // buildExtractionPrompt) but were missing here, so typing them into the
+  // operation search scored against the raw letters and matched nonsense
+  // ('nbr' hit "Sentinel node biopsy H&N"). Each expansion is worded to
+  // include the words that actually appear in the target leaf's path.
+  'nbr':'repair nailbed fingertip upper limb','fswo':'washout flexor tenosynovitis upper limb',
+  'edc':'extensor digitorum communis tendon','mua':'manipulation',
+  'ctd':'carpal tunnel decompression','wd':'debridement of wound',
   'ctr':'carpal tunnel decompression',
   'llf':'left long finger upper limb','rlf':'right long finger upper limb','lif':'left index finger upper limb','rif':'right index finger upper limb',
   'lrf':'left ring finger upper limb','rrf':'right ring finger upper limb','lsf':'left small finger upper limb','rsf':'right small finger upper limb',
@@ -2292,14 +2300,23 @@ function lbScore(query, entry, preferredCats){
   let qt = new Set([...qtFull].filter(t=>!LB_STOP.has(t) && t.length>1));
   if(!qt.size) qt = qtFull;
   if(!qt.size) return 0;
-  const pt = new Set([...entry.tokens].filter(t=>!LB_STOP.has(t)));
+  // The `t.length>1` filter must match the query side above. Without it,
+  // incidental single-character tokens in the tree ('n' and 'h' from "H&N",
+  // 's' from "tendon(s)", '1'/'2' from zone numbers) hit the substring branch
+  // below and scored ~0.87 against almost any query — which is why 'nbr'
+  // used to return "Sentinel node biopsy H&N" ('nbr' contains 'n') and the
+  // extensor abbreviations returned flexor repairs ('extensor' contains 's').
+  const pt = new Set([...entry.tokens].filter(t=>!LB_STOP.has(t) && t.length>1));
   if(!pt.size) return 0;
   let simSum = 0;
   for(const q of qt){
     let best = 0;
     for(const p of pt){
       let s;
-      if(q===p) s=1; else if(p.includes(q)||q.includes(p)) s=0.85+0.15*(Math.min(q.length,p.length)/Math.max(q.length,p.length));
+      // Substring matching only for tokens long enough to be meaningful;
+      // 2-character tokens must match exactly or they behave the same way.
+      const canPartial = Math.min(q.length, p.length) >= 3;
+      if(q===p) s=1; else if(canPartial && (p.includes(q)||q.includes(p))) s=0.85+0.15*(Math.min(q.length,p.length)/Math.max(q.length,p.length));
       else s=0;
       if(s>best) best=s;
       if(best>=1) break;

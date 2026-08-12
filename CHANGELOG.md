@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Fix operation search matching nonsense, 2026-08-12
+
+- **Fix: single-character tokens in the operation tree scored ~0.87 against almost any query.** `lbScore()` filtered query tokens to 2+ characters but never applied the same filter to the tree side, so incidental one-character tokens — `n`/`h` from "H&N", `s` from "tendon(s)", `1`/`2` from zone numbers — matched via the substring branch and dragged irrelevant leaves to the top. This is the root cause of `NBR` returning "Sentinel node biopsy H&N" (`nbr` contains `n`), and of the extensor abbreviations returning *flexor* repairs (`extensor` contains `s`). The tree side now uses the same length filter, and substring matching requires 3+ characters (2-character tokens must match exactly).
+- **Added missing abbreviations** that appear in the extractor's own prompt but not the search shorthand map: `NBR`, `FSWO`, `EDC`, `MUA`, `CTD`, `WD`. `NBR` now correctly resolves to "Repair nailbed".
+
 ## Unreleased — Fix "could not load the operation list", 2026-08-12
 
 - **Fix: the eLogbook operation tree is now inlined in `index.html`** instead of fetched from `elogbook-tree.json` at runtime. That fetch was the single point of failure behind "Could not load the operation list", and it had been failing *silently* in the search box too (that call site swallowed the error, so the search just returned nothing). Everything else the app needs — manifest, icons — was already inlined as a data URI for exactly this reason; the tree was the lone exception. Now works offline and on first load before the service worker has cached anything. `elogbook-tree.json` stays in the repo as the editable source of truth.
